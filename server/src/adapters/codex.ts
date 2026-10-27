@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { JsonObject } from './jsonl.js';
 import { runCli } from './run.js';
 import { resolveCommand } from './spawn.js';
+import { runCodexInteractive } from './interactive.js';
 import { isoFromEpoch, num, windowName, ZERO_USAGE, type AdapterEvent, type CliSpec, type QuotaWindow, type RunOptions } from './types.js';
 
 /** Codex attaches `rate_limits` snapshots ({primary, secondary}) to some events. */
@@ -48,6 +49,13 @@ function itemId(item: JsonObject): string | undefined {
   return typeof item.id === 'string' ? item.id : undefined;
 }
 
+function errorEvent(o: JsonObject): AdapterEvent {
+  const message = typeof o.message === 'string' ? o.message : JSON.stringify(o);
+  // The CLI continues with the required permissions after these notices.
+  const fallback = /^Configured value for `[^`]+` is disallowed by requirements; falling back to required value /.test(message);
+  return { type: 'error', message, ...(fallback ? { severity: 'warning' as const } : {}) };
+}
+
 function completedItem(item: JsonObject, remember: (text: string) => void): AdapterEvent[] {
   const id = itemId(item);
   switch (item.type) {
@@ -90,7 +98,7 @@ function completedItem(item: JsonObject, remember: (text: string) => void): Adap
       return [{ type: 'tool', id, name: 'web_search', input: { query: item.query } }];
 
     case 'error':
-      return [{ type: 'error', message: typeof item.message === 'string' ? item.message : JSON.stringify(item) }];
+      return [errorEvent(item)];
 
     default:
       return [];
@@ -100,6 +108,7 @@ function completedItem(item: JsonObject, remember: (text: string) => void): Adap
 /** Stateful per-run parser for `codex exec --json`. */
 export function createCodexParser(): (o: JsonObject) => AdapterEvent[] {
   let lastText: string | undefined;
+  const startedTools = new Set<string>();
   return (o) => [...quotaFromRateLimits(o), ...parseTyped(o)];
 
   function parseTyped(o: JsonObject): AdapterEvent[] {
@@ -107,12 +116,30 @@ export function createCodexParser(): (o: JsonObject) => AdapterEvent[] {
       case 'thread.started':
         return typeof o.thread_id === 'string' ? [{ type: 'session', id: o.thread_id }] : [];
 
+      case 'item.started': {
+        const item = o.item as JsonObject | undefined;
+        if (!item || typeof item !== 'object' || typeof item.id !== 'string' || startedTools.has(item.id)) return [];
+        // File changes and search queries can be populated only at completion.
+        if (item.type !== 'command_execution' && item.type !== 'mcp_tool_call') return [];
+        const events = completedItem(item, () => {}).filter((event) => event.type === 'tool');
+        if (events.length > 0) startedTools.add(item.id);
+        return events;
+      }
+
       case 'item.completed': {
         const item = o.item;
         if (!item || typeof item !== 'object') return [];
-        return completedItem(item as JsonObject, (t) => {
+        const typed = item as JsonObject;
+        let events = completedItem(typed, (t) => {
           lastText = t;
         });
+        if (typeof typed.id === 'string' && startedTools.delete(typed.id)) {
+          events = events.filter((event) => event.type !== 'tool');
+        }
+        if (typed.type === 'file_change' || typed.type === 'web_search') {
+          events.push({ type: 'tool_result', id: itemId(typed), output: '', isError: typed.status === 'failed' });
+        }
+        return events;
       }
 
       case 'turn.completed': {
@@ -149,7 +176,7 @@ export function createCodexParser(): (o: JsonObject) => AdapterEvent[] {
       }
 
       case 'error':
-        return [{ type: 'error', message: typeof o.message === 'string' ? o.message : JSON.stringify(o) }];
+        return [errorEvent(o)];
 
       default:
         return [];
@@ -158,6 +185,7 @@ export function createCodexParser(): (o: JsonObject) => AdapterEvent[] {
 }
 
 export async function* runCodex(opts: RunOptions): AsyncGenerator<AdapterEvent> {
+  if (opts.purpose === 'work' && opts.requestInput) { yield* runCodexInteractive(opts); return; }
   let schemaPath: string | undefined;
   if (opts.purpose !== 'work' && opts.jsonSchema) {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'council-codex-'));
@@ -165,7 +193,7 @@ export async function* runCodex(opts: RunOptions): AsyncGenerator<AdapterEvent> 
     await fs.writeFile(schemaPath, JSON.stringify(opts.jsonSchema), 'utf8');
   }
   try {
-    yield* runCli(buildCodexArgs(opts, schemaPath), { cwd: opts.cwd, env: opts.env, signal: opts.signal }, createCodexParser());
+    yield* runCli(buildCodexArgs(opts, schemaPath), { cwd: opts.cwd, env: opts.env, signal: opts.signal, stopAtResult: opts.purpose === 'vote' }, createCodexParser());
   } finally {
     if (schemaPath) await fs.rm(path.dirname(schemaPath), { recursive: true, force: true });
   }

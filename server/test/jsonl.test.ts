@@ -1,6 +1,12 @@
 import { expect, test } from 'vitest';
 import { JsonLineBuffer } from '../src/adapters/jsonl.js';
 
+test('ANSI wrapped events and split Unicode text are preserved', () => {
+  const b = new JsonLineBuffer();
+  expect(b.push('\u001b[32m{"text":"hello ')).toEqual([]);
+  expect(b.push('世界"}\u001b[0m\r\n')).toEqual([{ text: 'hello 世界' }]);
+});
+
 test('parses complete lines and skips garbage', () => {
   const b = new JsonLineBuffer();
   expect(b.push('{"a":1}\nWARNING: deprecated\n{"b":')).toEqual([{ a: 1 }]);

@@ -1,4 +1,4 @@
-import type { Provider, Tier } from '../adapters/types.js';
+import type { PendingInput, PermissionMode, Provider, Tier } from '../adapters/types.js';
 import type { CouncilResult, Seat } from '../council/council.js';
 import type { TabStatus } from './state.js';
 
@@ -35,8 +35,13 @@ export interface Tab {
   transcript: TranscriptItem[];
   costUsd: number;
   fullAuto: boolean;
+  permissionMode?: PermissionMode;
+  /** Mode actually used by the current turn; changes are staged for the next turn. */
+  activePermissionMode?: PermissionMode;
+  workerPermissionModes?: Record<string, PermissionMode>;
   escalations: number;
   stalled: boolean;
+  pendingInputs?: PendingInput[];
   createdAt: string;
   updatedAt: string;
 }

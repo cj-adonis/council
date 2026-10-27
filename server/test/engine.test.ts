@@ -6,13 +6,165 @@ import type { Adapter, AdapterEvent, Provider, RunOptions } from '../src/adapter
 import { DEFAULT_SETTINGS, type Settings } from '../src/config/settings.js';
 import { DEFAULT_PRICING } from '../src/ledger/pricing.js';
 import { readEntries } from '../src/ledger/ledger.js';
-import { TaskEngine } from '../src/tasks/engine.js';
+import { TaskEngine, hasChoicePrompt } from '../src/tasks/engine.js';
 import { TabStore } from '../src/tasks/store.js';
 import type { Tab } from '../src/tasks/types.js';
 import type { TabStatus } from '../src/tasks/state.js';
 import { FakeAdapter, failEvents, registry, voteEvents, workEvents, type FakeScript } from './helpers/fakeAdapter.js';
 
 type Scripts = Partial<Record<'vote' | 'work' | 'summarize', FakeScript>>;
+
+test('a worker reporting Task blocked cannot appear to have completed successfully', async () => {
+  const { engine } = setup({ settings: { autoEscalate: false }, adapters: { gemini: scripted('gemini', 'easy', { work: { events: workEvents('blocked-session', 'Task blocked: required tool is unavailable.') } }) } });
+  const tab = await engine.createTab('C:/proj', 'blocked output');
+  await engine.submit(tab.id, 'do task', { kind: 'manual', provider: 'gemini', model: null });
+  const failed = await waitFor(engine, tab.id, ['failed']);
+  expect(failed.transcript.find((item) => item.kind === 'result')?.data).toMatchObject({ isError: true });
+});
+
+test('answering a model question resumes its session without escalation or a new vote', async () => {
+  let turns = 0;
+  const gemini = new FakeAdapter('gemini', () => ({ events: workEvents('question-session', ++turns === 1 ? 'Which approach do you prefer?\n1. Add a cache\n2. Query directly' : 'Implemented your selected approach.') }));
+  const { engine } = setup({ adapters: { gemini } });
+  const tab = await engine.createTab('C:/proj', 'question');
+  await engine.submit(tab.id, 'implement lookup', { kind: 'manual', provider: 'gemini', model: null });
+  await waitFor(engine, tab.id, ['idle']);
+  expect(engine.getTab(tab.id)?.escalations).toBe(0);
+  expect(gemini.calls).toHaveLength(1);
+  await engine.send(tab.id, 'Add a cache');
+  const done = await waitFor(engine, tab.id, ['idle']);
+  expect(gemini.calls).toHaveLength(2);
+  expect(gemini.calls[1]).toMatchObject({ purpose: 'work', resumeId: 'question-session', prompt: expect.stringContaining('Add a cache') });
+  expect(done.escalations).toBe(0);
+});
+
+test('failed votes pause automatic start and require an explicit worker pick', async () => {
+  const noVote = { events: failEvents('v', 'model unavailable') };
+  const { engine, adapters } = setup({ settings: { autoStart: true }, adapters: { gemini: scripted('gemini', 'easy', { vote: noVote }), codex: scripted('codex', 'easy', { vote: noVote }), claude: scripted('claude', 'hard', { vote: noVote }) } });
+  const tab = await engine.createTab('C:/proj', 'no votes');
+  await engine.submit(tab.id, 'fix this', { kind: 'auto' });
+  const paused = await waitFor(engine, tab.id, ['awaiting-start']);
+  expect(paused.vote?.requiresConfirmation).toBe(true);
+  expect(Object.values(adapters).flatMap((a) => a.calls).filter((c) => c.purpose === 'work')).toHaveLength(0);
+  await expect(engine.start(tab.id)).rejects.toThrow(/Choose a worker/);
+  await engine.start(tab.id, { provider: 'codex', model: null });
+  await waitFor(engine, tab.id, ['idle']);
+});
+
+test('permission-blocked tools cannot finish successfully or auto-escalate', async () => {
+  const events: AdapterEvent[] = [
+    { type: 'tool', id: 'write', name: 'Write', input: {} },
+    { type: 'tool_result', id: 'write', output: 'Claude requested permissions to write, but you have not granted them.', isError: true },
+    { type: 'result', usage: { inputTokens: 3, cachedInputTokens: 0, outputTokens: 4 }, costUsd: 0.001, exitCode: 0, isError: false, text: "I couldn't edit the file because I need your permission." },
+  ];
+  const { engine, ledgerFile } = setup({ adapters: { gemini: scripted('gemini', 'easy', { work: { events } }) } });
+  const tab = await engine.createTab('C:/proj', 'blocked');
+  await engine.submit(tab.id, 'edit file', { kind: 'manual', provider: 'gemini', model: null });
+  const failed = await waitFor(engine, tab.id, ['failed']);
+  expect(failed.escalations).toBe(0);
+  expect(failed.transcript.find((i) => i.kind === 'result')?.data).toMatchObject({ isError: true });
+  expect(failed.transcript.some((i) => i.kind === 'error' && i.text?.includes('permissions blocked'))).toBe(true);
+  expect((await readEntries(ledgerFile)).filter((e) => e.purpose === 'work')).toHaveLength(1);
+});
+
+test('successful recovery from a denied tool can still complete the task', async () => {
+  const events: AdapterEvent[] = [
+    { type: 'tool_result', id: 'denied', output: 'permission denied', isError: true },
+    { type: 'tool_result', id: 'allowed', output: 'file updated', isError: false },
+    ...workEvents('recovered', 'Updated the file and verified the result.'),
+  ];
+  const { engine } = setup({ adapters: { gemini: scripted('gemini', 'easy', { work: { events } }) } });
+  const tab = await engine.createTab('C:/proj', 'recovered');
+  await engine.submit(tab.id, 'edit file', { kind: 'manual', provider: 'gemini', model: null });
+  await waitFor(engine, tab.id, ['idle']);
+});
+
+test('fatal stream errors cannot be masked by a nominally successful result', async () => {
+  const events: AdapterEvent[] = [{ type: 'error', message: 'Authentication failed' }, ...workEvents()];
+  const { engine } = setup({ settings: { autoEscalate: false }, adapters: { gemini: scripted('gemini', 'easy', { work: { events } }) } });
+  const tab = await engine.createTab('C:/proj', 'fatal');
+  await engine.submit(tab.id, 'edit', { kind: 'manual', provider: 'gemini', model: null });
+  const failed = await waitFor(engine, tab.id, ['failed']);
+  expect(failed.transcript.find((i) => i.kind === 'result')?.data).toMatchObject({ isError: true });
+});
+
+test('closing an unresponsive adapter finishes without waiting for its iterator', async () => {
+  const hanging = scripted('gemini', 'easy');
+  hanging.run = async function* () { yield { type: 'session', id: 'hanging' }; await new Promise(() => {}); };
+  const { engine } = setup({ adapters: { gemini: hanging } });
+  const tab = await engine.createTab('C:/proj', 'hang');
+  await engine.submit(tab.id, 'edit', { kind: 'manual', provider: 'gemini', model: null });
+  const started = Date.now();
+  await engine.close(tab.id);
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(engine.getTab(tab.id)?.status).toBe('closed');
+  await engine.delete(tab.id);
+});
+
+test('streamed Markdown is assembled into one message and bursts are batched', async () => {
+  const text = '```ts\nconst answer = 42;\n```';
+  const gemini = scripted('gemini', 'easy', { work: { events: [
+    ...Array.from(text, (part): AdapterEvent => ({ type: 'text', text: part, delta: true })),
+    { type: 'result', usage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 }, exitCode: 0, isError: false, text },
+  ] } });
+  const { engine } = setup({ adapters: { gemini } });
+  const tab = await engine.createTab('C:/proj', 'stream');
+  const updates: { id: string; text: string }[] = [];
+  engine.on('item', ({ item }) => {
+    if (item.kind === 'assistant') updates.push({ id: item.id, text: item.text });
+  });
+  await engine.submit(tab.id, 'write code', { kind: 'manual', provider: 'gemini', model: null });
+  const idle = await waitFor(engine, tab.id, ['idle']);
+  expect(idle.transcript.filter((item) => item.kind === 'assistant').map((item) => item.text)).toEqual([text]);
+  expect(updates).toHaveLength(2);
+  expect(updates[0]?.text).toBe('`');
+  expect(updates[1]).toEqual({ id: updates[0]?.id, text });
+});
+
+test('successful final-only answers are displayed on every turn', async () => {
+  const gemini = scripted('gemini', 'easy', { work: { events: [
+    { type: 'result', usage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 }, exitCode: 0, isError: false, text: 'Final answer' },
+  ] } });
+  const { engine } = setup({ adapters: { gemini } });
+  const tab = await engine.createTab('C:/proj', 'final');
+  await engine.submit(tab.id, 'answer', { kind: 'manual', provider: 'gemini', model: null });
+  await waitFor(engine, tab.id, ['idle']);
+  await engine.send(tab.id, 'answer again');
+  const idle = await waitFor(engine, tab.id, ['idle']);
+  expect(idle.transcript.filter((item) => item.kind === 'assistant').map((item) => item.text))
+    .toEqual(['Final answer', 'Final answer']);
+});
+
+test('final text completes a truncated stream without duplicating the reply', async () => {
+  const gemini = scripted('gemini', 'easy', { work: { events: [
+    { type: 'text', text: 'Partial', delta: true },
+    { type: 'result', usage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 }, exitCode: 0, isError: false, text: 'Partial answer completed' },
+  ] } });
+  const { engine } = setup({ adapters: { gemini } });
+  const tab = await engine.createTab('C:/proj', 'partial');
+  await engine.submit(tab.id, 'answer', { kind: 'manual', provider: 'gemini', model: null });
+  const idle = await waitFor(engine, tab.id, ['idle']);
+  expect(idle.transcript.filter((item) => item.kind === 'assistant').map((item) => item.text))
+    .toEqual(['Partial answer completed']);
+});
+
+test('delta text stays separated by tools and follow-up turns', async () => {
+  const gemini = scripted('gemini', 'easy', { work: { events: [
+    { type: 'text', text: 'Before', delta: true },
+    { type: 'tool', id: 't1', name: 'Read', input: {} },
+    { type: 'tool_result', id: 't1', output: 'ok' },
+    { type: 'text', text: 'After', delta: true },
+    { type: 'result', usage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 }, exitCode: 0, isError: false, text: 'BeforeAfter' },
+  ] } });
+  const { engine } = setup({ adapters: { gemini } });
+  const tab = await engine.createTab('C:/proj', 'tools');
+  await engine.submit(tab.id, 'answer', { kind: 'manual', provider: 'gemini', model: null });
+  await waitFor(engine, tab.id, ['idle']);
+  await engine.send(tab.id, 'continue');
+  const idle = await waitFor(engine, tab.id, ['idle']);
+  expect(idle.transcript.filter((item) => item.kind === 'assistant').map((item) => item.text))
+    .toEqual(['Before', 'After', 'Before', 'After']);
+});
 
 function summaryEvents(text: string): AdapterEvent[] {
   return [
@@ -104,7 +256,8 @@ test('auto submit: council votes, tab waits for start, then the worker streams t
   expect(all.filter((e) => e.purpose === 'work')).toHaveLength(1);
   expect(idle.costUsd).toBeCloseTo(0.001 * 3 + 0.01, 6);
   const workCall = adapters.gemini.calls.find((c) => c.purpose === 'work');
-  expect(workCall).toMatchObject({ cwd: 'C:/proj', model: 'flash-lite', prompt: 'Rename foo to bar in src/a.ts', fullAuto: false });
+  expect(workCall).toMatchObject({ cwd: 'C:/proj', model: 'flash-lite', prompt: expect.stringContaining('Rename foo to bar in src/a.ts'), fullAuto: false });
+  expect(workCall?.prompt).toContain('Do not repeat a denied action unchanged');
   expect(workCall?.resumeId).toBeUndefined();
   expect(workCall?.allowedCommands).toEqual(DEFAULT_SETTINGS.allowedCommands);
 });
@@ -118,6 +271,20 @@ test('autoStart skips the pause and runs straight after the vote', async () => {
   expect(idle.transcript.some((i) => i.kind === 'result')).toBe(true);
 });
 
+test('recoverable provider warnings remain visible without displaying worker errors', async () => {
+  const gemini = scripted('gemini', 'easy', { work: { events: [
+    { type: 'error', message: 'Using required managed permissions', severity: 'warning' },
+    ...workEvents('warning-session', 'PROMPT_OK'),
+  ] } });
+  const { engine } = setup({ adapters: { gemini } });
+  const tab = await engine.createTab('C:/proj', 'warning');
+  await engine.submit(tab.id, 'Reply PROMPT_OK', { kind: 'manual', provider: 'gemini', model: null });
+  const done = await waitFor(engine, tab.id, ['idle']);
+  expect(done.transcript.filter((item) => item.kind === 'error')).toEqual([]);
+  expect(done.transcript.some((item) => item.kind === 'system' && item.text === 'Warning: Using required managed permissions')).toBe(true);
+  expect(done.transcript.some((item) => item.kind === 'assistant' && item.text === 'PROMPT_OK')).toBe(true);
+});
+
 test('manual submit skips the council and derives the tier from the chosen provider', async () => {
   const { engine, ledgerFile } = setup();
   const tab = await engine.createTab('C:/proj', 't');
@@ -125,7 +292,8 @@ test('manual submit skips the council and derives the tier from the chosen provi
   const idle = await waitFor(engine, tab.id, ['idle']);
   expect(idle.vote).toBeNull();
   expect(idle.worker).toMatchObject({ provider: 'claude', model: 'claude-sonnet-5-5', sessionId: 'claude-session' });
-  expect(idle.fullAuto).toBe(true);
+  expect(idle.fullAuto).toBe(false);
+  expect(idle.permissionMode).toBe('auto');
   const entries = await readEntries(ledgerFile);
   expect(entries.map((e) => e.purpose)).toEqual(['work']);
 });
@@ -140,7 +308,7 @@ test('a follow-up message resumes the worker session', async () => {
   const idle = await waitFor(engine, tab.id, ['idle']);
   const calls = adapters.gemini.calls.filter((c) => c.purpose === 'work');
   expect(calls).toHaveLength(2);
-  expect(calls[1]).toMatchObject({ prompt: 'and also this', resumeId: 'gemini-session', model: 'flash-lite' });
+  expect(calls[1]).toMatchObject({ prompt: expect.stringContaining('and also this'), resumeId: 'gemini-session', model: 'flash-lite' });
   expect(idle.transcript.filter((i) => i.kind === 'user').map((i) => i.text)).toEqual(['first', 'and also this']);
 });
 
@@ -164,6 +332,39 @@ test('a worker failure auto-escalates once with a summary hand-off, and a second
   expect(purposes.filter((p) => p === 'work')).toHaveLength(2);
   expect(failed.transcript.filter((i) => i.kind === 'system').length).toBeGreaterThan(0);
 });
+
+test('a worker failure does not auto-escalate if the assistant output presents a choice to the user', async () => {
+  const choiceText = 'Found two possible migrations. Which option would you like to run?\n1. Reset database\n2. Skip migration';
+  const gemini = scripted('gemini', 'easy', {
+    work: {
+      events: [
+        { type: 'session', id: 'g-choice-sess' },
+        { type: 'text', text: choiceText },
+        { type: 'result', usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 20 }, costUsd: 0.001, exitCode: 1, isError: true, text: choiceText },
+      ],
+    },
+  });
+  const codex = scripted('codex', 'easy', { work: { events: workEvents('c-sess', 'codex did it') } });
+  const { engine } = setup({ settings: { autoStart: true }, adapters: { gemini, codex } });
+  const tab = await engine.createTab('C:/proj', 'Migration task');
+  await engine.submit(tab.id, 'Run migrations', { kind: 'auto' });
+  const failed = await waitFor(engine, tab.id, ['failed'], 5000);
+  expect(failed.worker?.provider).toBe('gemini');
+  expect(failed.escalations).toBe(0);
+  expect(codex.calls.filter((c) => c.purpose === 'work')).toHaveLength(0);
+});
+
+test('send on a failed tab without a worker recovers by assigning an available seat', async () => {
+  const { engine } = setup();
+  const tab = await engine.createTab('C:/proj', 'No worker task');
+  tab.status = 'failed';
+  tab.worker = null;
+  await engine.send(tab.id, 'Try again with fallback');
+  const running = await waitFor(engine, tab.id, ['running', 'idle']);
+  expect(running.worker).not.toBeNull();
+  expect(running.worker?.provider).toBe('gemini');
+});
+
 
 test('autoEscalate off leaves the tab failed on the first worker', async () => {
   const gemini = scripted('gemini', 'easy', { work: { events: failEvents() } });
@@ -241,6 +442,78 @@ test('clearContext resets worker session and resets chat transcript to a single 
   expect(voteCalls.length).toBe(2);
 });
 
+test('clearContext can be called on a drafting tab or awaiting-start tab', async () => {
+  const { engine } = setup({ settings: { autoStart: false } });
+  const tab = await engine.createTab('C:/proj', 't');
+  expect(tab.status).toBe('drafting');
+
+  // Can clear drafting tab
+  const cleared1 = await engine.clearContext(tab.id);
+  expect(cleared1.status).toBe('drafting');
+  expect(cleared1.transcript.length).toBe(1);
+
+  // Submit task with autoStart: false -> lands in awaiting-start
+  await engine.submit(tab.id, 'do something', { kind: 'auto' });
+  await waitFor(engine, tab.id, ['awaiting-start']);
+
+  // Can clear awaiting-start tab
+  const cleared2 = await engine.clearContext(tab.id);
+  expect(cleared2.status).toBe('drafting');
+  expect(cleared2.vote).toBeNull();
+  expect(cleared2.transcript.length).toBe(1);
+});
+
+test('hasChoicePrompt identifies choice prompts correctly', () => {
+  expect(hasChoicePrompt(undefined)).toBe(false);
+  expect(hasChoicePrompt('')).toBe(false);
+  expect(hasChoicePrompt('Failed with exit code 1')).toBe(false);
+  expect(hasChoicePrompt('Error: syntax error at line 42')).toBe(false);
+
+  // Numbered list
+  expect(hasChoicePrompt('Found two options:\n1. Reset database\n2. Skip migration')).toBe(true);
+
+  // Choice keywords with question mark
+  expect(hasChoicePrompt('Which option do you prefer?')).toBe(true);
+  expect(hasChoicePrompt('Please choose one: A or B')).toBe(true);
+  expect(hasChoicePrompt('Would you like to continue?')).toBe(true);
+  expect(hasChoicePrompt('Should I delete the existing file?')).toBe(true);
+});
+
+test('engine.send updates fullAuto flag and passes it to worker', async () => {
+  const { engine, adapters } = setup({ settings: { autoStart: true } });
+  const tab = await engine.createTab('C:/proj', 'Full auto test');
+  await engine.submit(tab.id, 'first step', { kind: 'auto' });
+  await waitFor(engine, tab.id, ['idle']);
+  expect(tab.fullAuto).toBe(false);
+
+  await engine.send(tab.id, 'run in full auto', { fullAuto: true });
+  expect(tab.fullAuto).toBe(true);
+  const idle = await waitFor(engine, tab.id, ['idle']);
+  expect(idle.fullAuto).toBe(true);
+  const workCalls = adapters.gemini.calls.filter((c) => c.purpose === 'work');
+  expect(workCalls[1]?.fullAuto).toBe(true);
+});
+
+test('engine.delete removes closed tab and throws for non-closed tabs', async () => {
+  const { engine } = setup();
+  const tab = await engine.createTab('C:/proj', 'Delete test');
+
+  // Cannot delete drafting tab
+  await expect(engine.delete(tab.id)).rejects.toThrow(/closed/);
+
+  // Close tab first
+  await engine.close(tab.id);
+
+  let deletedEventTabId: string | null = null;
+  engine.on('deleted', ({ tabId }: { tabId: string }) => {
+    deletedEventTabId = tabId;
+  });
+
+  await engine.delete(tab.id);
+  expect(deletedEventTabId).toBe(tab.id);
+  expect(engine.getTab(tab.id)).toBeUndefined();
+});
+
 test('closing a running tab aborts the worker and applies no further events', async () => {
   const slow = new FakeAdapter('gemini', (opts: RunOptions) =>
     opts.purpose === 'vote' ? { events: voteEvents('easy') } : { events: workEvents(), delayMs: 150 },
@@ -312,7 +585,7 @@ test('an unavailable provider drops out of the council and its tier is served by
   const voted = await waitFor(engine, tab.id, ['awaiting-start']);
   expect(voted.vote?.seats.map((s) => s.seat.provider)).toEqual(['codex', 'claude']);
   expect(voted.vote?.selectedSeat.provider).toBe('codex');
-  expect(voted.worker).toMatchObject({ provider: 'codex', model: 'gpt-5.1-codex-mini' });
+  expect(voted.worker).toMatchObject({ provider: 'codex', model: null });
   expect(voted.routing?.notes?.join(' ')).toMatch(/gemini/i);
 });
 
@@ -370,7 +643,8 @@ test('streaming many events emits few full-tab updates and clips oversized tool 
   expect(tabEmits).toBeLessThan(12);
   const toolItem = idle.transcript.find((i) => i.kind === 'tool');
   expect((toolItem?.tool?.output ?? '').length).toBeLessThan(25_000);
-  expect(idle.transcript.filter((i) => i.kind === 'assistant')).toHaveLength(40);
+  expect(idle.transcript.filter((i) => i.kind === 'assistant')).toHaveLength(41);
+  expect(idle.transcript.filter((i) => i.kind === 'assistant').at(-1)?.text).toBe('done');
 });
 
 test('usage windows reported by a CLI are kept per provider and exposed with the budgets', async () => {

@@ -84,6 +84,7 @@ export function Health({ health, onDetectModels, detecting }: Props) {
                     </>
                   )}
                   {h && h.installed && !h.authed && INSTALL_HINTS[p].auth}
+                  {h && h.installed && h.authed && h.error && <span className="warn-text">{h.error.split('\n')[0]}</span>}
                 </td>
               </tr>
             );

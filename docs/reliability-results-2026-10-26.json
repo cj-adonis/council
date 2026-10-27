@@ -1,0 +1,554 @@
+{
+  "generatedAt": "2026-10-26T10:37:36.658Z",
+  "scope": "Reliability fixes and a live interactive approval/question bridge across Claude Code, Codex CLI, and Gemini CLI.",
+  "baselineReport": "capability-results-2026-10-26.json",
+  "validation": {
+    "automated": {
+      "command": "npm test",
+      "passed": true,
+      "server": {
+        "files": 35,
+        "passed": 293
+      },
+      "client": {
+        "files": 15,
+        "passed": 90
+      },
+      "totalPassed": 383
+    },
+    "productionBuild": {
+      "command": "npm run build",
+      "passed": true
+    },
+    "harnessTypeCheck": {
+      "command": "npx tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 --types node --skipLibCheck server/test/choices.e2e.ts server/test/capability.ts",
+      "passed": true
+    },
+    "changedImplementationWhitespace": {
+      "command": "git diff --check -- <changed implementation files>",
+      "passed": true
+    }
+  },
+  "liveChoices": {
+    "command": "npm run choices:e2e",
+    "passed": true,
+    "scope": "All three installed providers, each using its configured CLI default. This does not claim coverage of every selectable model variant.",
+    "workspace": "Temporary isolated project; no requested shell commands or project edits.",
+    "checks": [
+      "Answer No to the first yes/no question, then Yes in a resumed follow-up.",
+      "Choose JSON from single-choice options.",
+      "Select both Server and Client from a multi-select question.",
+      "Submit a unique custom project name and verify the worker returns it.",
+      "Verify all answers in the worker response, the same session ID on follow-up, and recall of the custom name.",
+      "Handle real Gemini ACP permission requests for the local question tool before answering its forms."
+    ],
+    "testResponderPolicy": "Automatically answer only the harness questions and allow only the Council question tool; deny other approval requests.",
+    "providers": [
+      {
+        "provider": "claude",
+        "ok": true,
+        "status": "idle",
+        "tested": [
+          "yes/no",
+          "single choice",
+          "multiple selections",
+          "custom text"
+        ],
+        "multiSelect": true,
+        "receivedCustomAnswer": true,
+        "receivedAllAnswers": true,
+        "followupPassed": true,
+        "session": "b165273b-81e2-4f45-94a6-9c9740d4b8e2",
+        "durationMs": 52512,
+        "costUsd": 0.0072446,
+        "error": "",
+        "requests": [
+          {
+            "request": {
+              "kind": "question",
+              "title": "Claude needs your answer",
+              "questions": [
+                {
+                  "id": "0",
+                  "question": "Proceed?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "Yes",
+                      "description": "Proceed with actions"
+                    },
+                    {
+                      "label": "No",
+                      "description": "No actions should be performed"
+                    }
+                  ]
+                },
+                {
+                  "id": "1",
+                  "question": "Output format?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "JSON",
+                      "description": "Output in JSON format"
+                    },
+                    {
+                      "label": "Text",
+                      "description": "Output in plain text format"
+                    }
+                  ]
+                },
+                {
+                  "id": "2",
+                  "question": "Targets?",
+                  "multiSelect": true,
+                  "options": [
+                    {
+                      "label": "Server",
+                      "description": "Server target"
+                    },
+                    {
+                      "label": "Client",
+                      "description": "Client target"
+                    },
+                    {
+                      "label": "Docs",
+                      "description": "Docs target"
+                    }
+                  ]
+                },
+                {
+                  "id": "3",
+                  "question": "Project name?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "council-choices",
+                      "description": "Suggested name based on the workspace directory"
+                    },
+                    {
+                      "label": "claude-project",
+                      "description": "Generic suggested name"
+                    }
+                  ]
+                }
+              ],
+              "id": "209938ce2b8f8808",
+              "createdAt": "2026-10-26T10:09:15.543Z"
+            },
+            "reply": {
+              "decision": "answer",
+              "answers": {
+                "0": [
+                  "No"
+                ],
+                "1": [
+                  "JSON"
+                ],
+                "2": [
+                  "Server",
+                  "Client"
+                ],
+                "3": [
+                  "council-custom-claude-council-choices-1dFBjA"
+                ]
+              }
+            }
+          },
+          {
+            "request": {
+              "kind": "question",
+              "title": "Claude needs your answer",
+              "questions": [
+                {
+                  "id": "0",
+                  "question": "Proceed?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "Yes",
+                      "description": "Proceed with actions"
+                    },
+                    {
+                      "label": "No",
+                      "description": "No actions should be performed"
+                    }
+                  ]
+                }
+              ],
+              "id": "f156e3c6654d0635",
+              "createdAt": "2026-10-26T10:09:43.843Z"
+            },
+            "reply": {
+              "decision": "answer",
+              "answers": {
+                "0": [
+                  "Yes"
+                ]
+              }
+            }
+          }
+        ],
+        "cliVersion": "2.1.310",
+        "modelSelection": "Configured CLI default"
+      },
+      {
+        "provider": "codex",
+        "ok": true,
+        "status": "idle",
+        "tested": [
+          "yes/no",
+          "single choice",
+          "multiple selections",
+          "custom text"
+        ],
+        "multiSelect": true,
+        "receivedCustomAnswer": true,
+        "receivedAllAnswers": true,
+        "followupPassed": true,
+        "session": "01a177b0-2235-7871-8191-7f1c0811c3c9",
+        "durationMs": 56414,
+        "costUsd": 0.00645425,
+        "error": "",
+        "requests": [
+          {
+            "request": {
+              "kind": "question",
+              "title": "Codex needs your answer",
+              "questions": [
+                {
+                  "id": "proceed",
+                  "question": "Proceed?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "Yes"
+                    },
+                    {
+                      "label": "No"
+                    }
+                  ]
+                },
+                {
+                  "id": "output_format",
+                  "question": "Output format?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "JSON"
+                    },
+                    {
+                      "label": "Text"
+                    }
+                  ]
+                },
+                {
+                  "id": "targets",
+                  "question": "Targets?",
+                  "multiSelect": true,
+                  "options": [
+                    {
+                      "label": "Server"
+                    },
+                    {
+                      "label": "Client"
+                    },
+                    {
+                      "label": "Docs"
+                    }
+                  ]
+                },
+                {
+                  "id": "project_name",
+                  "question": "Project name?",
+                  "multiSelect": false,
+                  "options": []
+                }
+              ],
+              "id": "fbac906a92a51a28",
+              "createdAt": "2026-10-26T10:10:15.509Z"
+            },
+            "reply": {
+              "decision": "answer",
+              "answers": {
+                "proceed": [
+                  "No"
+                ],
+                "output_format": [
+                  "JSON"
+                ],
+                "targets": [
+                  "Server",
+                  "Client"
+                ],
+                "project_name": [
+                  "council-custom-codex-council-choices-1dFBjA"
+                ]
+              }
+            }
+          },
+          {
+            "request": {
+              "kind": "question",
+              "title": "Codex needs your answer",
+              "questions": [
+                {
+                  "id": "proceed",
+                  "question": "Proceed?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "Yes"
+                    },
+                    {
+                      "label": "No"
+                    }
+                  ]
+                }
+              ],
+              "id": "1872595e0e8710c1",
+              "createdAt": "2026-10-26T10:10:38.163Z"
+            },
+            "reply": {
+              "decision": "answer",
+              "answers": {
+                "proceed": [
+                  "Yes"
+                ]
+              }
+            }
+          }
+        ],
+        "cliVersion": "0.163.0",
+        "modelSelection": "Configured CLI default"
+      },
+      {
+        "provider": "gemini",
+        "ok": true,
+        "status": "idle",
+        "tested": [
+          "yes/no",
+          "single choice",
+          "multiple selections",
+          "custom text"
+        ],
+        "multiSelect": true,
+        "receivedCustomAnswer": true,
+        "receivedAllAnswers": true,
+        "followupPassed": true,
+        "session": "0a91084b-22c6-4075-8d94-4fd973154c61",
+        "durationMs": 238633,
+        "costUsd": 0.041620525000000005,
+        "error": "",
+        "requests": [
+          {
+            "request": {
+              "kind": "approval",
+              "title": "Allow Gemini to ask you questions",
+              "tool": "Council questions",
+              "input": {
+                "toolCallId": "mcp_council_ask_council_user__call_160824",
+                "status": "pending",
+                "title": "ask_council_user(questions: [(id: proceed, options: [(label: Yes), (label: No)], question: Proceed?), (id: output_format, options: [(label: JSON), (label: Text)], question: Output format?), (multiSelect: true, id: targets, question: Targets?, options: [(label: Server), (label: Client), (label: Docs)]), (options: [(label: my-app), (label: sample-project)], question: Project name?, id: project_name)])",
+                "content": [],
+                "locations": [],
+                "kind": "other"
+              },
+              "options": [
+                {
+                  "id": "proceed_once",
+                  "label": "Allow once",
+                  "decision": "allow"
+                },
+                {
+                  "id": "cancel",
+                  "label": "Deny",
+                  "decision": "deny"
+                }
+              ],
+              "id": "45b623ce181ff200",
+              "createdAt": "2026-10-26T10:12:23.591Z"
+            },
+            "reply": {
+              "decision": "allow",
+              "optionId": "proceed_once"
+            }
+          },
+          {
+            "request": {
+              "kind": "question",
+              "title": "Gemini needs your answer",
+              "questions": [
+                {
+                  "id": "proceed",
+                  "question": "Proceed?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "Yes"
+                    },
+                    {
+                      "label": "No"
+                    }
+                  ]
+                },
+                {
+                  "id": "output_format",
+                  "question": "Output format?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "JSON"
+                    },
+                    {
+                      "label": "Text"
+                    }
+                  ]
+                },
+                {
+                  "id": "targets",
+                  "question": "Targets?",
+                  "multiSelect": true,
+                  "options": [
+                    {
+                      "label": "Server"
+                    },
+                    {
+                      "label": "Client"
+                    },
+                    {
+                      "label": "Docs"
+                    }
+                  ]
+                },
+                {
+                  "id": "project_name",
+                  "question": "Project name?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "my-app"
+                    },
+                    {
+                      "label": "sample-project"
+                    }
+                  ]
+                }
+              ],
+              "id": "61de8fa41a48a3cc",
+              "createdAt": "2026-10-26T10:12:23.600Z"
+            },
+            "reply": {
+              "decision": "answer",
+              "answers": {
+                "proceed": [
+                  "No"
+                ],
+                "output_format": [
+                  "JSON"
+                ],
+                "targets": [
+                  "Server",
+                  "Client"
+                ],
+                "project_name": [
+                  "council-custom-gemini-council-choices-1dFBjA"
+                ]
+              }
+            }
+          },
+          {
+            "request": {
+              "kind": "approval",
+              "title": "Allow Gemini to ask you questions",
+              "tool": "Council questions",
+              "input": {
+                "toolCallId": "mcp_council_ask_council_user__call_165068",
+                "status": "pending",
+                "title": "ask_council_user(questions: [(id: proceed, question: Proceed?, options: [(label: Yes), (label: No)])])",
+                "content": [],
+                "locations": [],
+                "kind": "other"
+              },
+              "options": [
+                {
+                  "id": "proceed_once",
+                  "label": "Allow once",
+                  "decision": "allow"
+                },
+                {
+                  "id": "cancel",
+                  "label": "Deny",
+                  "decision": "deny"
+                }
+              ],
+              "id": "34eb999445a2e78d",
+              "createdAt": "2026-10-26T10:14:33.928Z"
+            },
+            "reply": {
+              "decision": "allow",
+              "optionId": "proceed_once"
+            }
+          },
+          {
+            "request": {
+              "kind": "question",
+              "title": "Gemini needs your answer",
+              "questions": [
+                {
+                  "id": "proceed",
+                  "question": "Proceed?",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "Yes"
+                    },
+                    {
+                      "label": "No"
+                    }
+                  ]
+                }
+              ],
+              "id": "2d4b39629c033483",
+              "createdAt": "2026-10-26T10:14:33.933Z"
+            },
+            "reply": {
+              "decision": "answer",
+              "answers": {
+                "proceed": [
+                  "Yes"
+                ]
+              }
+            }
+          }
+        ],
+        "cliVersion": "0.65.0",
+        "modelSelection": "Configured CLI default"
+      }
+    ]
+  },
+  "regressionCoverage": [
+    "Question format matrix for all three provider adapters: yes/no, single choice, multi-select, custom Unicode text, and multiple question IDs.",
+    "Real child process fixtures wait for approval before writing a marker; denial prevents the write.",
+    "Proposed file diff reaches the approval card before the action is allowed.",
+    "Claude SDK native approval and AskUserQuestion callback mappings.",
+    "Concurrent requests answered in reverse order, duplicate/stale/wrong-tab submissions, invalid and incomplete answers.",
+    "HTTP same-origin checks, WebSocket reconnect snapshots, browser input state retention, and double-click prevention.",
+    "Cancellation on tab close, CLI disconnection, MCP HTTP disconnect, and invalidation on server restart.",
+    "No automatic escalation after user denial; waiting for user input does not count as a stall.",
+    "Secret answer redaction in transcript and output.",
+    "Graceful CLI shutdown flushes session state before process cleanup.",
+    "Windows executable shim selection, canonical temporary paths, bounded cancellation, and child-process-tree termination.",
+    "Slow health probes preserve installed providers, shared health caching, unsupported automatic Codex seats use the CLI default, and failed votes cannot auto-start work."
+  ],
+  "liveDiscoveredFixes": [
+    "Prefer Windows .exe/.com/.cmd/.bat shims over npm Unix shell launchers with the same bare command name.",
+    "Use ask_council_user for the MCP question tool because the installed Gemini ACP implementation excludes tools named ask_user."
+  ],
+  "limitations": [
+    "Live tests exercise the three provider CLI defaults; other individual model variants need their own runs.",
+    "Permission allow/deny and proposed-edit behavior additionally use deterministic native-protocol child fixtures and SDK callback mocks; live question tests do not approve arbitrary shell or file operations.",
+    "The earlier coding skill/routing benchmark remains a historical baseline and was not rerun as part of this final live choices validation.",
+    "CLI protocols can change; tested versions are recorded per provider."
+  ]
+}

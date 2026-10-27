@@ -11,6 +11,37 @@ const seats: Seat[] = [
   { provider: 'claude', model: 'claude-haiku-5-5' },
 ];
 
+test('partial JSON without a completion event cannot become a valid vote', async () => {
+  const partial = new FakeAdapter('gemini', { events: [{ type: 'text', text: '{"confidence":1,"complexity":1,"reason":"ready"}' }] });
+  const result = await runCouncil({ seats: [seats[0]!], adapters: registry(new FakeAdapter('claude', { events: [] }), new FakeAdapter('codex', { events: [] }), partial), task: 'edit', cwd: 'C:/w', snapshot: '', onResult: () => {}, pricing: DEFAULT_PRICING });
+  expect(result.seats[0]?.vote).toBeNull();
+  expect(result.seats[0]?.error).toMatch(/completion event/);
+  expect(result.requiresConfirmation).toBe(true);
+});
+
+test('a completed seat stays valid when its CLI stalls afterward and retains reported usage', async () => {
+  const adapter = new FakeAdapter('codex', { events: [] });
+  adapter.run = async function* (opts) {
+    adapter.calls.push(opts);
+    yield* voteEvents(0.96, 1, 'Focused read-only lookup', 0.002);
+    await new Promise(() => {});
+  };
+  const recorded: ResultEvent[] = [];
+  const started = Date.now();
+  const result = await runCouncil({
+    seats: [{ provider: 'codex', model: null }],
+    adapters: registry(new FakeAdapter('claude', { events: [] }), adapter, new FakeAdapter('gemini', { events: [] })),
+    task: 'lookup', cwd: 'C:/w', snapshot: '', timeoutMs: 100,
+    onResult: (eventProvider, _model, event) => { expect(eventProvider).toBe('codex'); recorded.push(event); },
+    pricing: DEFAULT_PRICING,
+  });
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(result.seats[0]).toMatchObject({ vote: { confidence: 0.96, complexity: 1 }, costUsd: 0.002 });
+  expect(result.seats[0]?.error).toBeUndefined();
+  expect(recorded).toMatchObject([{ costUsd: 0.002, usage: { inputTokens: 100, outputTokens: 20 } }]);
+  expect(adapter.calls[0]?.signal?.aborted).toBe(true);
+});
+
 type Reported = [Provider, string | null, number | undefined];
 
 function run(g: FakeAdapter, c: FakeAdapter, k: FakeAdapter, extra: Partial<Parameters<typeof runCouncil>[0]> = {}) {
@@ -55,10 +86,37 @@ test('seats run tool-less votes with the vote prompt and the JSON schema', async
   expect(g.calls[0]?.prompt).toContain('Top-level: src/');
 });
 
+test('council applies and records the configured confidence threshold', async () => {
+  const { promise } = run(
+    new FakeAdapter('gemini', { events: voteEvents(0.7, 2) }),
+    new FakeAdapter('codex', { events: voteEvents(0.9, 2) }),
+    new FakeAdapter('claude', { events: voteEvents(0.95, 2) }),
+    { confidenceThreshold: 0.7 },
+  );
+  const result = await promise;
+  expect(result.selectedSeat.provider).toBe('gemini');
+  expect(result.isFallback).toBe(false);
+  expect(result.confidenceThreshold).toBe(0.7);
+});
+
+test('a successful vote with a managed permission warning is not marked as a failed seat', async () => {
+  const { promise } = run(
+    new FakeAdapter('gemini', { events: voteEvents(0.9, 2) }),
+    new FakeAdapter('codex', { events: [
+      { type: 'error', message: 'Using required managed permissions', severity: 'warning' },
+      ...voteEvents(0.9, 2),
+    ] }),
+    new FakeAdapter('claude', { events: voteEvents(0.9, 2) }),
+  );
+  const result = await promise;
+  expect(result.seats[1]?.vote?.confidence).toBe(0.9);
+  expect(result.seats[1]?.error).toBeUndefined();
+});
+
 test('seats report quota windows', async () => {
   let quotaReported = false;
   await run(
-    new FakeAdapter('gemini', { events: [...voteEvents(0.9, 1), { type: 'quota', windows: [{ name: 'day', fraction: 0.5 }] }] }),
+    new FakeAdapter('gemini', { events: [{ type: 'quota', windows: [{ name: 'day', usedPct: 0.5 }] }, ...voteEvents(0.9, 1)] }),
     new FakeAdapter('codex', { events: voteEvents(0.9, 1) }),
     new FakeAdapter('claude', { events: voteEvents(0.9, 1) }),
     { onQuota: () => { quotaReported = true; } },

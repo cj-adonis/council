@@ -1,8 +1,10 @@
+import { stripVTControlCharacters } from 'node:util';
+
 export type JsonObject = Record<string, unknown>;
 
 /** Parse one line as a JSON object; anything else (prose, numbers, arrays, partial JSON) yields null. */
 export function parseObjectLine(line: string): JsonObject | null {
-  const trimmed = line.trim();
+  const trimmed = stripVTControlCharacters(line).trim();
   if (!trimmed.startsWith('{')) return null;
   try {
     const value: unknown = JSON.parse(trimmed);

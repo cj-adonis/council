@@ -2,6 +2,15 @@ import { expect, test } from 'vitest';
 import type { Tab } from '../types';
 import { closedTabs, groupTabs, isStreaming, laneCounts, laneOf, statusPhrase, stepThrough, tabChips, toneOf, turnStart, visibleOrder } from './lanes';
 
+test('live questions and approvals move a running tab to Needs you and stop the streaming indicator', () => {
+  const waiting = tab({ status: 'running', pendingInputs: [{ id: 'input', createdAt: '', kind: 'approval', title: 'Approve?' }] });
+  expect(laneOf(waiting)).toBe('needs-you');
+  expect(isStreaming(waiting)).toBe(false);
+  expect(statusPhrase(waiting)).toBe('Waiting for approval');
+  waiting.pendingInputs![0]!.kind = 'question';
+  expect(statusPhrase(waiting)).toBe('Waiting for your answer');
+});
+
 function tab(over: Partial<Tab> = {}): Tab {
   return {
     id: over.id ?? 't',
@@ -86,6 +95,11 @@ test('tabChips lists risks and modes', () => {
   expect(tabChips(tab())).toEqual([]);
 });
 
+test('legacy Claude Full auto is labeled Auto review rather than permission bypass', () => {
+  const legacy = tab({ fullAuto: true, worker: { provider: 'claude', model: null, sessionId: null } });
+  expect(tabChips(legacy)).toEqual([{ label: 'auto review', tone: 'accent', title: 'The provider reviews eligible actions automatically' }]);
+});
+
 test('groupTabs orders lanes, omits empty ones and puts newest first', () => {
   const a = tab({ id: 'a', status: 'running', createdAt: '2026-10-21T09:00:00Z' });
   const b = tab({ id: 'b', status: 'idle', createdAt: '2026-10-21T10:00:00Z' });
@@ -110,4 +124,10 @@ test('stepThrough wraps and starts from the ends when nothing is selected', () =
 
 test('laneCounts counts working and needs-you tabs', () => {
   expect(laneCounts([tab({ status: 'running' }), tab({ status: 'voting' }), tab({ status: 'idle' }), tab({ status: 'closed' })])).toEqual({ working: 2, needsYou: 1 });
+});
+
+test('permission chips describe the active turn instead of the queued mode', () => {
+  const running = tab({ status: 'running', fullAuto: true, permissionMode: 'full-auto', activePermissionMode: 'plan' });
+  expect(tabChips(running).map(chip => chip.label)).toEqual(['plan']);
+  expect(tabChips(tab({ permissionMode: 'auto' })).map(chip => chip.label)).toEqual(['auto review']);
 });

@@ -34,6 +34,7 @@ export function rankSeats(seats: Seat[], pricing: PriceTable): Seat[] {
 }
 
 export interface RoutingDecision {
+  requiresConfirmation?: boolean;
   selectedSeat: Seat;
   confidence: number;
   complexity: number;
@@ -48,6 +49,7 @@ export function selectSeat(
   pricing: PriceTable,
   budgets: Partial<Record<Provider, BudgetState>> = {},
   unavailable: Provider[] = [],
+  confidenceThreshold = 0.8,
 ): RoutingDecision {
   if (seats.length === 0) {
     return {
@@ -56,6 +58,7 @@ export function selectSeat(
       complexity: 3,
       reason: 'No council seats configured',
       isFallback: true,
+      requiresConfirmation: true,
     };
   }
 
@@ -75,11 +78,11 @@ export function selectSeat(
   }
   const getResult = (st: Seat) => seatResultMap.get(`${st.provider}:${st.model ?? ''}`);
 
-  const availableRanked = ranked.filter((st) => !isBlocked(st.provider));
+  const availableRanked = ranked.filter((st) => !isBlocked(st.provider) && getResult(st)?.vote && !getResult(st)?.error);
 
   const confident = availableRanked.filter((st) => {
     const res = getResult(st);
-    return res?.vote && res.vote.confidence >= 0.8;
+    return res?.vote && res.vote.confidence >= confidenceThreshold;
   });
 
   const cheapestSeat = ranked[0];
@@ -96,7 +99,7 @@ export function selectSeat(
       : res?.vote?.reason || 'Selected lowest-cost confident model';
     return {
       selectedSeat: winner,
-      confidence: res?.vote?.confidence ?? 0.8,
+      confidence: res?.vote?.confidence ?? confidenceThreshold,
       complexity,
       reason,
       isFallback: false,
@@ -111,20 +114,21 @@ export function selectSeat(
       selectedSeat: strongest,
       confidence: res?.vote?.confidence ?? 0.5,
       complexity,
-      reason: 'No seat reached 80% confidence; routed to strongest available model',
+      reason: `No seat reached ${Math.round(confidenceThreshold * 100)}% confidence; routed to strongest available model`,
       isFallback: true,
     };
   }
 
-  const defaultSeat = (ranked[0] ?? seats[0]?.seat) as Seat;
-  const res = getResult(defaultSeat);
+  const reachable = ranked.filter((st) => !isBlocked(st.provider));
+  const defaultSeat = (reachable.at(-1) ?? ranked[0] ?? seats[0]?.seat) as Seat;
   return {
-    selectedSeat: defaultSeat,
-    confidence: res?.vote?.confidence ?? 0.5,
+    selectedSeat: { ...defaultSeat, model: null },
+    confidence: 0,
     complexity,
-    reason: 'All providers are exhausted or unavailable; keeping default seat',
+    reason: reachable.length > 0 ? 'No seat returned a usable vote. Choose a worker before starting.' : 'All providers are exhausted or unavailable. Choose a worker before starting.',
     isFallback: true,
-    exhaustedNotice: `Every provider is exhausted or unavailable (${why(defaultSeat.provider)})`,
+    requiresConfirmation: true,
+    exhaustedNotice: reachable.length > 0 ? undefined : `Every provider is exhausted or unavailable (${why(defaultSeat.provider)})`,
   };
 }
 

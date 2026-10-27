@@ -11,6 +11,7 @@ export interface PlanInfo {
 export interface SkillInfo {
   name: string;
   source: string;
+  path: string;
 }
 
 async function isDir(p: string): Promise<boolean> {
@@ -102,6 +103,8 @@ export async function findSkills(projectRoot: string, home: string = os.homedir(
     { dir: path.join(projectRoot, '.gemini', 'skills'), source: 'project' },
     { dir: path.join(projectRoot, '.claude', 'skills'), source: 'project' },
     { dir: path.join(projectRoot, '.agents', 'skills'), source: 'project' },
+    { dir: path.join(projectRoot, '.codex', 'skills'), source: 'project' },
+    { dir: path.join(projectRoot, 'tools', 'skills'), source: 'project' },
     { dir: path.join(home, '.gemini', 'skills'), source: 'gemini' },
     { dir: path.join(home, '.claude', 'skills'), source: 'claude' },
     { dir: path.join(home, '.codex', 'skills'), source: 'codex' },
@@ -113,11 +116,14 @@ export async function findSkills(projectRoot: string, home: string = os.homedir(
     try {
       const items = await fs.readdir(dir, { withFileTypes: true });
       for (const item of items) {
-        if (!item.isDirectory() && !item.isFile()) continue;
+        if (!item.isDirectory() && !item.isFile() && !item.isSymbolicLink()) continue;
         const name = item.name.replace(/\.md$/, '');
         if (name.startsWith('.') || seenNames.has(name)) continue;
+        const skillFile = item.isFile() && item.name.endsWith('.md')
+          ? path.join(dir, item.name) : path.join(dir, item.name, 'SKILL.md');
+        if (!(await isFile(skillFile))) continue;
         seenNames.add(name);
-        skills.push({ name, source });
+        skills.push({ name, source, path: skillFile.replace(/\\/g, '/') });
       }
     } catch {
       /* ignore */

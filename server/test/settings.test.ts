@@ -21,7 +21,8 @@ test('the defaults match the spec', () => {
   expect(DEFAULT_SETTINGS.autoStart).toBe(false);
   expect(DEFAULT_SETTINGS.autoEscalate).toBe(true);
   expect(DEFAULT_SETTINGS.stallMinutes).toBe(10);
-  expect(DEFAULT_SETTINGS.seatTimeoutMs).toBe(60_000);
+  expect(DEFAULT_SETTINGS.seatTimeoutMs).toBe(180_000);
+  expect(DEFAULT_SETTINGS.seats.find((s) => s.provider === 'codex')?.model).toBeNull();
   expect(DEFAULT_SETTINGS.voteCostCeiling).toBe(0.05);
   expect(DEFAULT_SETTINGS.allowedCommands.length).toBeGreaterThan(5);
 });
@@ -52,9 +53,18 @@ test('legacy settings with tierMap load cleanly and ignore tierMap', async () =>
 
 test('save then load round-trips', async () => {
   const file = tmpFile();
-  const changed = { ...DEFAULT_SETTINGS, resetDay: 15, recentProjects: ['C:/p'] };
+  const changed = { ...DEFAULT_SETTINGS, confidenceThreshold: 0.95, resetDay: 15, recentProjects: ['C:/p'] };
   await saveSettings(file, changed);
   expect(await loadSettings(file)).toEqual(changed);
+});
+
+test('confidence threshold defaults to 80%, clamps to 0..1, and rejects invalid values', () => {
+  expect(mergeSettings(DEFAULT_SETTINGS, {}).confidenceThreshold).toBe(0.8);
+  expect(mergeSettings(DEFAULT_SETTINGS, { confidenceThreshold: -1 }).confidenceThreshold).toBe(0);
+  expect(mergeSettings(DEFAULT_SETTINGS, { confidenceThreshold: 2 }).confidenceThreshold).toBe(1);
+  for (const confidenceThreshold of ['0.9', null, NaN, Infinity]) {
+    expect(mergeSettings(DEFAULT_SETTINGS, { confidenceThreshold }).confidenceThreshold).toBe(0.8);
+  }
 });
 
 test('a corrupt file falls back to the defaults instead of crashing', async () => {

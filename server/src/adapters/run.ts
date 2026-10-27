@@ -6,12 +6,14 @@ export interface RunCliOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  /** Tool-less votes finish at the CLI's terminal message, without waiting for process cleanup. */
+  stopAtResult?: boolean;
 }
 
 /**
  * Runs a CLI spec, parses each JSON line with `parse`, and yields the events.
  * The CLI's own `result` event is held back until the process exits so the real
- * exit code can be attached; when the CLI never emits one, a result is synthesized
+ * exit code can be attached (except tool-less votes using stopAtResult); when the CLI never emits one, a result is synthesized
  * from the exit code and the stderr tail.
  */
 export async function* runCli(
@@ -19,29 +21,39 @@ export async function* runCli(
   opts: RunCliOptions,
   parse: (obj: JsonObject) => AdapterEvent[],
 ): AsyncGenerator<AdapterEvent> {
+  const completion = new AbortController();
   const child = spawnCli(spec.cmd, spec.args, {
     cwd: opts.cwd,
     env: opts.env,
     stdin: spec.stdin,
-    signal: opts.signal,
+    signal: opts.signal ? AbortSignal.any([opts.signal, completion.signal]) : completion.signal,
   });
 
-  let result: ResultEvent | undefined;
-  for await (const obj of child.lines) {
-    for (const ev of parse(obj)) {
-      if (ev.type === 'result') {
-        result = ev;
-      } else {
-        yield ev;
+  try {
+    let result: ResultEvent | undefined;
+    for await (const obj of child.lines) {
+      for (const ev of parse(obj)) {
+        if (ev.type === 'result') {
+          if (opts.stopAtResult) { yield ev; return; }
+          result = ev;
+        } else {
+          yield ev;
+        }
       }
     }
-  }
 
-  const exitCode = await child.exit;
-  if (result) {
-    yield { ...result, exitCode, isError: result.isError || exitCode !== 0 };
-  } else {
-    yield synthesizedResult(exitCode, exitCode !== 0, child.stderr());
+    const exitCode = await child.exit;
+    if (result) {
+      const isError = result.isError || exitCode !== 0;
+      const stderrText = child.stderr().trim();
+      const text = result.text || (isError && stderrText ? stderrText : undefined);
+      yield { ...result, exitCode, isError, text };
+    } else {
+      const detail = child.stderr().trim() || child.stdoutTail().trim();
+      yield synthesizedResult(exitCode, true, ['The CLI exited without a recognized completion event. Its response may be incomplete.', detail].filter(Boolean).join('\n'));
+    }
+  } finally {
+    if (opts.stopAtResult) completion.abort();
   }
 }
 

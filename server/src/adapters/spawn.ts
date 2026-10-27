@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { JsonLineBuffer, type JsonObject } from './jsonl.js';
+import { untilAbort } from './abort.js';
 
 export interface SpawnOptions {
   cwd: string;
@@ -11,6 +12,7 @@ export interface SpawnOptions {
   signal?: AbortSignal;
   /** Keep the raw stdout text (for CLIs that print one multi-line JSON object). */
   captureStdout?: boolean;
+  keepStdinOpen?: boolean;
 }
 
 export interface SpawnedCli {
@@ -18,14 +20,36 @@ export interface SpawnedCli {
   lines: AsyncIterable<JsonObject>;
   /** Raw stdout text; empty unless `captureStdout` was set. */
   stdout: () => string;
+  /** Last 8 KB of stdout, including malformed/non-JSON output. */
+  stdoutTail: () => string;
   /** Exit code; -1 when the child was killed by a signal or failed to start. */
   exit: Promise<number>;
   /** Last 8 KB of stderr, for diagnostics. */
   stderr: () => string;
   pid: number | undefined;
+  write: (message: unknown) => Promise<void>;
+  endInput: () => void;
 }
 
 const STDERR_KEEP = 8 * 1024;
+
+/** Locate executables without needing to start them (a cold CLI can be slow). */
+export function findCommand(name: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
+  // npm ships a Unix shell shim alongside foo.cmd. Never choose it first on Windows.
+  const extensions = platform === 'win32' && !path.extname(name) ? ['.exe', '.com', '.cmd', '.bat', ''] : [''];
+  const dirs = path.isAbsolute(name) || /[\\/]/.test(name) ? [''] : (env.PATH ?? env.Path ?? '').split(path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of extensions) {
+      const candidate = dir ? path.join(dir, name + ext) : name + ext;
+      try {
+        if (!fs.statSync(candidate).isFile()) continue;
+        if (platform !== 'win32') fs.accessSync(candidate, fs.constants.X_OK);
+        return candidate;
+      } catch { /* try the next PATH entry */ }
+    }
+  }
+  return null;
+}
 
 /**
  * On Windows, npm-installed CLIs are `.cmd` shims. Returns the shim path when one
@@ -38,12 +62,7 @@ export function resolveCommand(
 ): string {
   if (platform !== 'win32') return name;
   if (path.isAbsolute(name) || /\.(cmd|bat|exe)$/i.test(name)) return name;
-  const pathVar = env.PATH ?? env.Path ?? '';
-  for (const dir of pathVar.split(path.delimiter).filter(Boolean)) {
-    const candidate = path.join(dir, `${name}.cmd`);
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return name;
+  return findCommand(name, env, platform) ?? name;
 }
 
 /**
@@ -72,11 +91,14 @@ function prepare(cmd: string, args: string[]): { file: string; argv: string[] } 
 
 export function spawnCli(cmd: string, args: string[], opts: SpawnOptions): SpawnedCli {
   const { file, argv } = prepare(cmd, args);
+  let cwd = opts.cwd;
+  try { cwd = fs.realpathSync.native(cwd); } catch { /* let spawn report invalid directories */ }
   const child = spawn(file, argv, {
-    cwd: opts.cwd,
+    cwd,
     env: opts.env ?? process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
+    detached: process.platform !== 'win32',
   });
 
   let stderrBuf = '';
@@ -104,27 +126,46 @@ export function spawnCli(cmd: string, args: string[], opts: SpawnOptions): Spawn
 
   if (opts.signal) {
     const kill = () => {
-      if (child.exitCode === null && !child.killed) child.kill();
+      if (child.exitCode !== null || child.killed || !child.pid) return;
+      if (process.platform === 'win32') {
+        execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, timeout: 5_000 }, () => {
+          if (child.exitCode === null && !child.killed) child.kill();
+        });
+      } else {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill(); }
+      }
+      // Descendants can inherit pipes. Closing them keeps cancellation bounded.
+      child.stdout.destroy();
+      child.stderr.destroy();
     };
     if (opts.signal.aborted) kill();
     else opts.signal.addEventListener('abort', kill, { once: true });
+    child.once('close', () => opts.signal?.removeEventListener('abort', kill));
   }
 
   child.stdin.on('error', () => {
     /* child exited before reading stdin; nothing to do */
   });
-  child.stdin.end(opts.stdin ?? '');
+  if (opts.keepStdinOpen) {
+    if (opts.stdin) child.stdin.write(opts.stdin);
+  } else child.stdin.end(opts.stdin ?? '');
+  const write = (message: unknown): Promise<void> => new Promise((resolve, reject) => {
+    if (child.stdin.destroyed || child.stdin.writableEnded) return reject(new Error('CLI input is closed'));
+    child.stdin.write(`${JSON.stringify(message)}\n`, (err) => err ? reject(err) : resolve());
+  });
 
   let rawStdout = '';
+  let stdoutTail = '';
   const lines = (async function* () {
     const buffer = new JsonLineBuffer();
     child.stdout.setEncoding('utf8');
-    for await (const chunk of child.stdout as AsyncIterable<string>) {
+    for await (const chunk of untilAbort(child.stdout as AsyncIterable<string>, opts.signal)) {
+      stdoutTail = (stdoutTail + chunk).slice(-STDERR_KEEP);
       if (opts.captureStdout) rawStdout += chunk;
       for (const obj of buffer.push(chunk)) yield obj;
     }
     for (const obj of buffer.flush()) yield obj;
   })();
 
-  return { lines, exit, stderr: () => stderrBuf, stdout: () => rawStdout, pid: child.pid };
+  return { lines, exit, stderr: () => stderrBuf, stdout: () => rawStdout, stdoutTail: () => stdoutTail, pid: child.pid, write, endInput: () => child.stdin.end() };
 }

@@ -16,6 +16,7 @@ export function runGit(cwd: string, args: string[]): Promise<GitResult> {
         cwd,
         encoding: 'utf8',
         maxBuffer: 16 * 1024 * 1024,
+        timeout: 60_000,
         windowsHide: true,
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       },
@@ -25,7 +26,7 @@ export function runGit(cwd: string, args: string[]): Promise<GitResult> {
           const c = (err as NodeJS.ErrnoException & { code?: number | string }).code;
           code = typeof c === 'number' ? c : 127;
         }
-        resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
+        resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr || (err ? err.message : '')) });
       },
     );
   });

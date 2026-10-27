@@ -15,8 +15,11 @@
     "dev": "concurrently -n server,client -c blue,green \"npm -w server run dev\" \"npm -w client run dev\"",
     "build": "npm -w server run build && npm -w client run build",
     "test": "npm -w server test && npm -w client test",
-    "e2e": "npm -w server run e2e",
-    "start": "node server/dist/index.js"
+    "e2e": "npm -w server run e2e --",
+    "capability": "npm -w server run capability --",
+    "choices:e2e": "npm -w server run choices:e2e --",
+    "start": "node server/dist/index.js",
+    "permissions:e2e": "npm -w server run permissions:e2e --"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

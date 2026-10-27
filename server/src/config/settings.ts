@@ -11,12 +11,14 @@ export interface Settings {
   warnPct: number;
   resetDay: number;
   seats: Seat[];
+  /** Minimum self-reported confidence required for lowest-cost routing (0..1). */
+  confidenceThreshold: number;
   autoStart: boolean;
   autoEscalate: boolean;
   stallMinutes: number;
   seatTimeoutMs: number;
   voteCostCeiling: number;
-  /** Claude `--allowedTools` entries for workers that are not in Full auto. */
+  /** Claude `--allowedTools` entries for worker permission rules. */
   allowedCommands: string[];
   /** Model choices offered in the UI per provider. */
   models: Record<Provider, string[]>;
@@ -30,13 +32,14 @@ export const DEFAULT_SETTINGS: Settings = {
   resetDay: 1,
   seats: [
     { provider: 'gemini', model: 'flash-lite' },
-    { provider: 'codex', model: 'gpt-5.1-codex-mini' },
+    { provider: 'codex', model: null },
     { provider: 'claude', model: 'claude-haiku-5-5' },
   ],
   autoStart: false,
+  confidenceThreshold: 0.8,
   autoEscalate: true,
   stallMinutes: 10,
-  seatTimeoutMs: 60_000,
+  seatTimeoutMs: 180_000,
   voteCostCeiling: 0.05,
   allowedCommands: [
     'Bash(npm test*)',
@@ -100,6 +103,7 @@ function stringArray(v: unknown): string[] | undefined {
 function cleanValue(key: string, value: unknown, current: unknown): unknown {
   switch (key) {
     case 'warnPct':
+    case 'confidenceThreshold':
       return numberIn(value, 0, 1);
     case 'resetDay': {
       const n = numberIn(value, 1, 31);

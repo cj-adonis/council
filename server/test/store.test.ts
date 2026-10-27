@@ -8,6 +8,20 @@ function store(): TabStore {
   return new TabStore(fs.mkdtempSync(path.join(os.tmpdir(), 'council-store-')));
 }
 
+test('overlapping stream and final saves persist the latest snapshot in order', async () => {
+  const s = store();
+  const tab = newTab(s, 'C:/p', 'streaming');
+  const saves: Promise<void>[] = [];
+  for (let i = 0; i < 20; i++) {
+    tab.transcript.push({ id: String(i), kind: 'assistant', text: String(i), ts: tab.createdAt });
+    saves.push(s.save(tab));
+  }
+  tab.status = 'idle';
+  saves.push(s.save(tab));
+  await expect(Promise.all(saves)).resolves.toHaveLength(21);
+  expect(await s.load(tab.projectId, tab.id)).toEqual(tab);
+});
+
 test('projectId is stable across separators and case on Windows, and distinct for other paths', () => {
   const s = store();
   const a = s.projectId('C:\\Users\\X\\Proj', 'win32');
@@ -50,6 +64,12 @@ test('save, load and list round-trip, sorted by creation time', async () => {
   expect((await s.list(first.projectId)).map((t) => t.title)).toEqual(['first', 'second']);
   expect(await s.load(first.projectId, 'missing')).toBeNull();
   expect(await s.list('unknown-project')).toEqual([]);
+  await s.delete(first.projectId, first.id);
+  expect(await s.load(first.projectId, first.id)).toBeNull();
+  expect((await s.list(first.projectId)).map((t) => t.title)).toEqual(['second']);
+  // Deleting non-existent or already deleted tab is idempotent
+  await expect(s.delete(first.projectId, first.id)).resolves.not.toThrow();
+  await expect(s.delete(first.projectId, 'non-existent-id')).resolves.not.toThrow();
 });
 
 test('listProjects returns the project ids that have tabs', async () => {

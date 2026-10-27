@@ -29,6 +29,20 @@ const out = (provider: Provider): BudgetState => ({
 });
 const budgets = { gemini: ok('gemini'), codex: ok('codex'), claude: ok('claude') };
 
+test('failed seats cannot win a confident or low-confidence fallback selection', () => {
+  const failed = { ...makeResult(seats[0]!, 0.99), error: 'model not supported' };
+  const healthy = makeResult(seats[2]!, 0.3);
+  expect(selectSeat([failed, healthy], DEFAULT_PRICING).selectedSeat).toEqual(healthy.seat);
+});
+
+test('no usable votes requires explicit worker selection with zero confidence', () => {
+  const results = seats.map((seat) => ({ ...makeResult(seat, 0.99), vote: null, error: 'timeout' }));
+  const result = selectSeat(results, DEFAULT_PRICING);
+  expect(result.requiresConfirmation).toBe(true);
+  expect(result.confidence).toBe(0);
+  expect(result.selectedSeat.model).toBeNull();
+});
+
 function makeResult(seat: Seat, confidence: number, complexity = 2, reason = 'test'): SeatResult {
   return {
     seat,
@@ -65,6 +79,22 @@ test('selectSeat falls back to strongest reasoning seat when no seat reaches 80%
   const decision = selectSeat(results, DEFAULT_PRICING, budgets);
   expect(decision.selectedSeat.provider).toBe('claude');
   expect(decision.isFallback).toBe(true);
+});
+
+test('custom confidence thresholds change eligibility and include the boundary', () => {
+  const results = [
+    makeResult(seats[1]!, 0.65),
+    makeResult(seats[2]!, 0.9),
+    makeResult(seats[0]!, 0.95),
+  ];
+  expect(selectSeat(results, DEFAULT_PRICING, budgets, [], 0.65).selectedSeat.provider).toBe('gemini');
+  expect(selectSeat(results, DEFAULT_PRICING, budgets, [], 0.9).selectedSeat.provider).toBe('codex');
+  const fallback = selectSeat(results, DEFAULT_PRICING, budgets, [], 1);
+  expect(fallback.selectedSeat.provider).toBe('claude');
+  expect(fallback.isFallback).toBe(true);
+  expect(fallback.reason).toContain('100%');
+  const blocked = selectSeat(results, DEFAULT_PRICING, budgets, ['gemini'], 0.65);
+  expect(blocked.selectedSeat.provider).toBe('codex');
 });
 
 test('selectSeat shifts away from exhausted provider even if confident', () => {

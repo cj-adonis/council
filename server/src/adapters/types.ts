@@ -1,5 +1,6 @@
 export type Provider = 'claude' | 'codex' | 'gemini';
 export const PROVIDERS: readonly Provider[] = ['claude', 'codex', 'gemini'];
+export type PermissionMode = 'default' | 'plan' | 'accept-edits' | 'auto' | 'full-auto';
 
 export type Tier = 'easy' | 'medium' | 'hard';
 export const TIER_ORDER: readonly Tier[] = ['easy', 'medium', 'hard'];
@@ -28,6 +29,31 @@ export const ZERO_USAGE: Usage = { inputTokens: 0, cachedInputTokens: 0, outputT
 /** Hard cap passed to Claude for a council vote, in USD. */
 export const VOTE_MAX_BUDGET_USD = 0.05;
 
+export interface InputQuestion {
+  id: string;
+  question: string;
+  options: { label: string; description?: string }[];
+  multiSelect?: boolean;
+  isSecret?: boolean;
+}
+
+export interface InputPrompt {
+  kind: 'approval' | 'question';
+  title: string;
+  description?: string;
+  tool?: string;
+  input?: unknown;
+  options?: { id: string; label: string; decision: 'allow' | 'deny' }[];
+  questions?: InputQuestion[];
+}
+
+export interface PendingInput extends InputPrompt { id: string; createdAt: string }
+export interface InputReply {
+  decision: 'allow' | 'deny' | 'answer';
+  optionId?: string;
+  answers?: Record<string, string[]>;
+}
+
 export interface RunOptions {
   cwd: string;
   prompt: string;
@@ -36,12 +62,17 @@ export interface RunOptions {
   purpose: Purpose;
   resumeId?: string;
   fullAuto: boolean;
+  permissionMode?: PermissionMode;
   /** Claude `--allowedTools` entries, e.g. `Bash(npm test*)`. Ignored by other CLIs. */
   allowedCommands: string[];
   signal?: AbortSignal;
   /** JSON schema the answer must match (votes). */
   jsonSchema?: Record<string, unknown>;
   env?: NodeJS.ProcessEnv;
+  /** Keeps the current CLI turn paused until the browser returns a decision. */
+  requestInput?: (prompt: InputPrompt, signal?: AbortSignal) => Promise<InputReply>;
+  /** Register a native control for permission changes on this running session. */
+  registerPermissionMode?: (apply: (mode: PermissionMode) => Promise<void>) => Promise<void>;
 }
 
 /** A usage window the provider enforces on this account, as the CLI reported it. */
@@ -55,11 +86,12 @@ export interface QuotaWindow {
 export type AdapterEvent =
   | { type: 'session'; id: string }
   | { type: 'quota'; windows: QuotaWindow[] }
-  | { type: 'text'; text: string }
+  // Deltas extend the current assistant message; other text starts a new message.
+  | { type: 'text'; text: string; delta?: boolean }
   | { type: 'tool'; id?: string; name: string; input: unknown }
   | { type: 'tool_result'; id?: string; output: string; isError?: boolean }
   | { type: 'result'; usage: Usage; costUsd?: number; exitCode: number; isError: boolean; text?: string }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string; severity?: 'warning' };
 
 export type ResultEvent = Extract<AdapterEvent, { type: 'result' }>;
 

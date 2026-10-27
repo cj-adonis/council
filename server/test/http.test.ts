@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterAll, beforeAll, expect, test } from 'vitest';
+import { afterAll, beforeAll, expect, test, vi } from 'vitest';
+import { workEvents } from './helpers/fakeAdapter.js';
 import WebSocket from 'ws';
 import { SettingsStore } from '../src/config/settings.js';
 import { PricingStore } from '../src/ledger/pricing.js';
@@ -10,6 +11,74 @@ import { makeEngine, type EngineFixture } from './helpers/engineSetup.js';
 let fixture: EngineFixture;
 let server: CouncilServer;
 let base: string;
+
+test('permission endpoint changes only the mode and rejects unsupported values', async () => {
+  const tab = await fixture.engine.createTab('C:/proj', 'permission endpoint');
+  const result = await api('POST', `/api/tabs/${tab.id}/permissions`, { permissionMode: 'plan' });
+  expect(result.status).toBe(200);
+  expect(tab.status).toBe('drafting');
+  expect(tab.permissionMode).toBe('plan');
+  expect((await api('POST', `/api/tabs/${tab.id}/permissions`, { permissionMode: 'anything' })).status).toBe(400);
+  expect(tab.permissionMode).toBe('plan');
+  expect((await api('POST', `/api/tabs/${tab.id}/submit`, { text: 'work', mode: { kind: 'manual', provider: 'gemini', model: null }, permissionMode: 'auto' })).status).toBe(400);
+  expect(tab.status).toBe('drafting');
+  await fixture.engine.close(tab.id);
+});
+
+test('Stop endpoint cancels a live prompt and permits another message on the same tab', async () => {
+  const original = fixture.adapters.claude.run;
+  fixture.adapters.claude.run = async function* (opts) {
+    await opts.requestInput!({ kind: 'approval', title: 'Stuck command', options: [{ id: 'allow', label: 'Allow once', decision: 'allow' }] });
+    yield* workEvents('cancelled');
+  };
+  const tab = await fixture.engine.createTab('C:/proj', 'stop via HTTP');
+  try {
+    await api('POST', `/api/tabs/${tab.id}/submit`, { text: 'start', mode: { kind: 'manual', provider: 'claude', model: null } });
+    await vi.waitFor(() => expect(tab.pendingInputs).toHaveLength(1));
+    const requestId = tab.pendingInputs![0]!.id;
+    const stopped = await api('POST', `/api/tabs/${tab.id}/stop`, {});
+    expect(stopped.status).toBe(200);
+    expect(stopped.json).toMatchObject({ status: 'idle', pendingInputs: [] });
+    expect((await api('POST', `/api/tabs/${tab.id}/input`, { requestId, decision: 'allow', optionId: 'allow' })).status).toBe(409);
+    fixture.adapters.claude.run = original;
+    expect((await api('POST', `/api/tabs/${tab.id}/send`, { text: 'New approach' })).status).toBe(200);
+    await vi.waitFor(() => expect(tab.status).toBe('idle'));
+  } finally { fixture.adapters.claude.run = original; await fixture.engine.close(tab.id); }
+});
+
+test('live questions survive browser reconnect and answers are accepted exactly once', async () => {
+  const previous = fixture.adapters.gemini.run;
+  let received: unknown;
+  fixture.adapters.gemini.run = async function* (opts) {
+    received = await opts.requestInput!({ kind: 'question', title: 'Proceed?', questions: [{ id: 'proceed', question: 'Proceed?', options: [{ label: 'Yes' }, { label: 'No' }] }] });
+    yield* workEvents('live-http-session', 'done', 0);
+  };
+  const tab = await fixture.engine.createTab('C:/proj', 'live HTTP');
+  try {
+    await api('POST', `/api/tabs/${tab.id}/submit`, { text: 'ask first', mode: { kind: 'manual', provider: 'gemini', model: null } });
+    await vi.waitFor(() => expect(tab.pendingInputs).toHaveLength(1));
+    const requestId = tab.pendingInputs![0]!.id;
+    for (let reconnect = 0; reconnect < 2; reconnect++) {
+      const hello = await new Promise<any>((resolve, reject) => {
+        const ws = new WebSocket(base.replace('http:', 'ws:') + '/ws');
+        const timer = setTimeout(() => { ws.terminate(); reject(new Error('No hello received')); }, 5_000);
+        ws.on('error', reject);
+        ws.on('message', (data) => { const value = JSON.parse(String(data)); if (value.type === 'hello') { clearTimeout(timer); ws.close(); resolve(value); } });
+      });
+      expect(hello.tabs.find((value: { id: string }) => value.id === tab.id).pendingInputs[0].id).toBe(requestId);
+    }
+    const foreign = await fetch(`${base}/api/tabs/${tab.id}/input`, { method: 'POST', headers: { origin: 'https://outside.example', 'content-type': 'application/json' }, body: JSON.stringify({ requestId, decision: 'answer', answers: { proceed: ['Yes'] } }) });
+    expect(foreign.status).toBe(403);
+    expect((await api('POST', `/api/tabs/${tab.id}/input`, { requestId: 'stale', decision: 'deny' })).status).toBe(409);
+    expect((await api('POST', `/api/tabs/${tab.id}/input`, { requestId, decision: 'answer', answers: {} })).status).toBe(400);
+    const reply = { requestId, decision: 'answer', answers: { proceed: ['No'] } };
+    expect((await api('POST', `/api/tabs/${tab.id}/input`, reply)).status).toBe(200);
+    expect((await api('POST', `/api/tabs/${tab.id}/input`, reply)).status).toBe(409);
+    await vi.waitFor(() => expect(tab.status).toBe('idle'));
+    expect(received).toEqual({ decision: 'answer', answers: { proceed: ['No'] } });
+    expect(tab.pendingInputs).toEqual([]);
+  } finally { await fixture.engine.close(tab.id); fixture.adapters.gemini.run = previous; }
+});
 
 beforeAll(async () => {
   fixture = makeEngine();
@@ -105,6 +174,13 @@ test('GET /api/plans returns detected plans and skills', async () => {
   expect(Array.isArray(res.json.skills)).toBe(true);
 });
 
+test('GET /api/skills returns skills without plan data', async () => {
+  const res = await api('GET', '/api/skills');
+  expect(res.status).toBe(200);
+  expect(Array.isArray(res.json.skills)).toBe(true);
+  expect(res.json.plans).toBeUndefined();
+});
+
 test('GET /api/pricing returns the table and PUT replaces an entry', async () => {
   const r = await api('GET', '/api/pricing');
   expect(r.json.flash).toBeDefined();
@@ -138,6 +214,23 @@ test('PUT /api/settings keeps the recent-project list the server maintains', asy
   expect(saved.status).toBe(200);
   expect(saved.json.autoStart).toBe(true);
   expect(saved.json.recentProjects).toEqual(before);
+});
+
+test('GET /api/projects/:id restores a recent project without waiting for Git metadata', async () => {
+  const opened = await api('POST', '/api/projects', { path: process.cwd() });
+  expect(opened.status).toBe(200);
+  const restored = await api('GET', `/api/projects/${opened.json.projectId}`);
+  expect(restored.status).toBe(200);
+  expect(restored.json).toMatchObject({
+    projectId: opened.json.projectId,
+    root: opened.json.root,
+    defaultBranch: null,
+  });
+  expect(restored.json.tabs).toBeInstanceOf(Array);
+  const branch = await api('GET', `/api/projects/${opened.json.projectId}/branch`);
+  expect(branch.status).toBe(200);
+  expect(branch.json).toHaveProperty('defaultBranch');
+  expect((await api('GET', '/api/projects/discover')).status).toBe(200);
 });
 
 test('tabs: create, list, get, submit; the websocket streams the tab updates', async () => {
@@ -184,6 +277,34 @@ test('tabs: create, list, get, submit; the websocket streams the tab updates', a
   const closed = await api('POST', `/api/tabs/${id}/close`);
   expect(closed.json.status).toBe('closed');
   ws.close();
+});
+
+test('closed tabs can be deleted from disk and disappear from connected clients', async () => {
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`);
+  const messages: any[] = [];
+  ws.on('message', (data) => messages.push(JSON.parse(String(data))));
+  await new Promise<void>((resolve, reject) => {
+    ws.on('open', resolve);
+    ws.on('error', reject);
+  });
+  try {
+    const created = await api('POST', '/api/tabs', { projectRoot: 'C:/proj', title: 'Old tab' });
+    const id = created.json.id as string;
+    const file = path.join(fixture.home, 'projects', created.json.projectId, 'tabs', `${id}.json`);
+    expect(fs.existsSync(file)).toBe(true);
+    expect((await api('DELETE', `/api/tabs/${id}`)).status).toBe(409);
+    expect((await api('POST', `/api/tabs/${id}/close`)).status).toBe(200);
+    expect((await api('DELETE', `/api/tabs/${id}`)).status).toBe(200);
+    expect(fs.existsSync(file)).toBe(false);
+    expect(fixture.engine.getTab(id)).toBeUndefined();
+    expect((await api('GET', `/api/tabs/${id}`)).status).toBe(404);
+    for (let i = 0; i < 20 && !messages.some((m) => m.type === 'deleted' && m.tabId === id); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(messages.some((m) => m.type === 'deleted' && m.tabId === id)).toBe(true);
+  } finally {
+    ws.close();
+  }
 });
 
 test('POST /api/projects validates the path and registers it as recent', async () => {

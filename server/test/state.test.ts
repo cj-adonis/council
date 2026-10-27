@@ -40,9 +40,17 @@ test('close works from every state', () => {
   for (const s of TAB_STATUSES) expect(transition(s, 'close')).toBe('closed');
 });
 
-test('clear-context transitions idle and failed back to drafting', () => {
+test('Stop returns active work to idle so another message can be sent', () => {
+  for (const status of ['running', 'voting', 'handing-off'] as const)
+    expect(transition(status, 'stop')).toBe('idle');
+  expect(() => transition('closed', 'stop')).toThrow(InvalidTransition);
+});
+
+test('clear-context transitions idle, failed, drafting and awaiting-start back to drafting', () => {
   expect(transition('idle', 'clear-context')).toBe('drafting');
   expect(transition('failed', 'clear-context')).toBe('drafting');
+  expect(transition('drafting', 'clear-context')).toBe('drafting');
+  expect(transition('awaiting-start', 'clear-context')).toBe('drafting');
   expect(() => transition('running', 'clear-context')).toThrow(InvalidTransition);
 });
 

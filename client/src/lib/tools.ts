@@ -7,7 +7,7 @@ import { lineDiff } from './diff';
  * read_file / search_file_content, Codex command_execution / file_change /
  * web_search and `<server>.<tool>` for MCP. The transcript renders by kind.
  */
-export type ToolKind = 'command' | 'edit' | 'write' | 'read' | 'search' | 'file-change' | 'web' | 'task' | 'mcp' | 'other';
+export type ToolKind = 'command' | 'edit' | 'write' | 'read' | 'search' | 'file-change' | 'web' | 'task' | 'choice' | 'mcp' | 'other';
 
 export interface Edit {
   before: string;
@@ -55,6 +55,7 @@ const READ = new Set(['read', 'read_file', 'read_many_files', 'cat', 'view_file'
 const SEARCH = new Set(['glob', 'grep', 'search_file_content', 'grep_search', 'list_directory', 'ls', 'find_files', 'codebase_search', 'file_search']);
 const WEB = new Set(['webfetch', 'websearch', 'web_fetch', 'google_web_search', 'web_search', 'fetch']);
 const TASK = new Set(['task', 'agent', 'subagent']);
+const CHOICE = new Set(['ask_user', 'question', 'confirm', 'choice', 'prompt_user']);
 
 function isMcp(name: string): boolean {
   return name.startsWith('mcp__') || /^[\w-]+\.[\w-]+/.test(name);
@@ -112,6 +113,17 @@ export function classifyTool(tool: { name: string; input: unknown }): ToolView {
   }
   if (TASK.has(name)) {
     return { ...base, kind: 'task', verb: 'Delegated', subject: str(input, 'description', 'prompt') ?? firstString(input), glyph: '⋯' };
+  }
+  if (CHOICE.has(name)) {
+    const qArray = input['questions'];
+    let subject = '';
+    if (Array.isArray(qArray) && qArray.length > 0) {
+      const firstQ = obj(qArray[0]);
+      subject = str(firstQ, 'question', 'header', 'prompt') ?? '';
+    } else {
+      subject = str(input, 'question', 'prompt', 'message', 'header') ?? firstString(input);
+    }
+    return { ...base, kind: 'choice', verb: 'Asked', subject, glyph: '?' };
   }
   if (isMcp(tool.name)) {
     return { ...base, kind: 'mcp', verb: 'Called', subject: tool.name.replace(/^mcp__/, '').replace(/__/g, '.'), glyph: '◇' };

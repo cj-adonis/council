@@ -16,6 +16,7 @@ export type TabEvent =
   | 'switch'
   | 'handoff-ready'
   | 'clear-context'
+  | 'stop'
   | 'close';
 
 export class InvalidTransition extends Error {
@@ -29,13 +30,13 @@ export class InvalidTransition extends Error {
 }
 
 const TABLE: Record<TabStatus, Partial<Record<TabEvent, TabStatus>>> = {
-  drafting: { 'submit-auto': 'voting', 'submit-manual': 'running' },
-  voting: { 'vote-done': 'awaiting-start', 'vote-done-autostart': 'running' },
-  'awaiting-start': { start: 'running' },
-  running: { 'worker-done': 'idle', 'worker-failed': 'failed' },
+  drafting: { 'submit-auto': 'voting', 'submit-manual': 'running', 'clear-context': 'drafting' },
+  voting: { 'vote-done': 'awaiting-start', 'vote-done-autostart': 'running', stop: 'idle' },
+  'awaiting-start': { start: 'running', 'clear-context': 'drafting' },
+  running: { 'worker-done': 'idle', 'worker-failed': 'failed', stop: 'idle' },
   idle: { message: 'running', escalate: 'handing-off', switch: 'handing-off', 'clear-context': 'drafting' },
   failed: { message: 'running', escalate: 'handing-off', switch: 'handing-off', 'clear-context': 'drafting' },
-  'handing-off': { 'handoff-ready': 'running' },
+  'handing-off': { 'handoff-ready': 'running', stop: 'idle' },
   closed: {},
 };
 

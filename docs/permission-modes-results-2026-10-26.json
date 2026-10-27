@@ -1,0 +1,244 @@
+{
+  "generatedAt": "2026-10-26T12:47:11.667Z",
+  "scope": "Native per-worker/model permission mode controls and regression testing of the live approval/question bridge.",
+  "previousReport": "reliability-results-2026-10-26.json",
+  "behavior": {
+    "endpoint": "POST /api/tabs/:id/permissions { permissionMode }",
+    "modes": [
+      "default",
+      "plan",
+      "accept-edits",
+      "auto",
+      "full-auto"
+    ],
+    "autoReviewProviders": [
+      "claude",
+      "codex"
+    ],
+    "persistence": "Saved per provider/model within each tab; legacy fullAuto remains synchronized for compatibility.",
+    "activeRuns": "Mode changes are staged for the next turn. Current permissions and pending approvals are unchanged. The UI shows current and next modes.",
+    "modelSwitches": "Restore the saved choice for the target model. An unseen model gets Accept edits, with Plan preserved when switching out of Plan. Full auto is never copied automatically to an unseen model.",
+    "failedNativeModes": "Unsupported native modes fail with protocol details; Plan and Auto failures do not automatically escalate."
+  },
+  "validation": {
+    "productionBuild": {
+      "command": "npm run build",
+      "passed": true
+    },
+    "harnessTypeCheck": {
+      "command": "npx tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 --types node --skipLibCheck server/test/permissions.e2e.ts server/test/choices.e2e.ts",
+      "passed": true
+    },
+    "fullRegression": {
+      "command": "npm test",
+      "passed": true,
+      "serverPassed": 326,
+      "clientPassed": 95
+    },
+    "finalChangedServerChecks": {
+      "command": "npm -w server test -- test/permissions.test.ts test/permission-protocol.test.ts test/interactive.test.ts",
+      "passed": true,
+      "testsPassed": 36,
+      "includesAdditionalServerTests": 2
+    },
+    "finalClientSuite": {
+      "command": "npm -w client test",
+      "passed": true,
+      "testsPassed": 96
+    },
+    "currentUniqueTestsVerified": {
+      "server": 328,
+      "client": 96,
+      "total": 424,
+      "note": "The complete suite passed before three final regression assertions were added; affected server tests and the complete client suite passed afterwards."
+    },
+    "changedFilesWhitespace": {
+      "passed": true
+    }
+  },
+  "livePermissionTransitions": {
+    "command": "npm run permissions:e2e [-- --providers=claude,codex,gemini]",
+    "scope": "All three providers using their configured CLI defaults; successful runs combined from recorded attempts.",
+    "checks": [
+      "The target file does not exist after Plan mode.",
+      "Switch to Accept edits without resetting the session.",
+      "Create the exact expected marker file.",
+      "Verify the same session ID and successful completion."
+    ],
+    "testPolicy": "Temporary authored workspaces. Deny shell requests and unrelated permissions. Allow only a proposed edit to the exact test marker after selecting Accept edits. Gemini fixture trust is process-local and does not alter user trust settings.",
+    "passed": true,
+    "results": [
+      {
+        "provider": "claude",
+        "cliVersion": "2.1.310",
+        "modelSelection": "Configured CLI default",
+        "ok": true,
+        "planKeptFileUnchanged": true,
+        "planStatus": "idle",
+        "editPassed": true,
+        "sameSession": true,
+        "finalStatus": "idle",
+        "durationMs": 68083,
+        "source": "council-permissions-QCXn58"
+      },
+      {
+        "provider": "codex",
+        "cliVersion": "0.163.0",
+        "modelSelection": "Configured CLI default",
+        "ok": true,
+        "planKeptFileUnchanged": true,
+        "planStatus": "idle",
+        "editPassed": true,
+        "sameSession": true,
+        "finalStatus": "idle",
+        "durationMs": 50953,
+        "requests": [
+          {
+            "request": {
+              "kind": "approval",
+              "title": "Approve file changes",
+              "description": "command failed; retry without sandbox?",
+              "tool": "item/fileChange/requestApproval",
+              "input": {
+                "threadId": "01a17836-4ca2-7db0-80a8-8ec0dfedfa0d",
+                "turnId": "01a17836-9b62-78c3-8b89-f4ca56e6cc13",
+                "itemId": "exec-3d401391-63fb-4feb-8fc0-b1b78ccc4b3a",
+                "startedAtMs": 1793018227198,
+                "reason": "command failed; retry without sandbox?",
+                "grantRoot": null,
+                "proposedChanges": [
+                  {
+                    "path": "C:\\Users\\cj.adonis\\AppData\\Local\\Temp\\council-permissions-7FCiry\\codex\\permission-marker.txt",
+                    "kind": {
+                      "type": "add"
+                    },
+                    "diff": "mode-bridge-codex\n"
+                  }
+                ]
+              },
+              "options": [
+                {
+                  "id": "allow",
+                  "label": "Allow once",
+                  "decision": "allow"
+                },
+                {
+                  "id": "deny",
+                  "label": "Deny",
+                  "decision": "deny"
+                }
+              ],
+              "id": "fc58a1cd5af3866b",
+              "createdAt": "2026-10-26T12:37:07.199Z"
+            },
+            "reply": {
+              "decision": "allow",
+              "optionId": "allow"
+            }
+          }
+        ],
+        "source": "council-permissions-7FCiry"
+      },
+      {
+        "provider": "gemini",
+        "modelSelection": "Configured CLI default",
+        "ok": true,
+        "planKeptFileUnchanged": true,
+        "planStatus": "idle",
+        "editPassed": true,
+        "sameSession": true,
+        "finalStatus": "idle",
+        "durationMs": 163983,
+        "requests": [],
+        "source": "council-permissions-xTAr3a",
+        "cliVersion": "0.65.0"
+      }
+    ]
+  },
+  "liveChoicesRegression": {
+    "command": "npm run choices:e2e",
+    "source": "council-choices-zdendV",
+    "passed": true,
+    "checks": [
+      "Yes and No across two turns",
+      "Single choice",
+      "Multiple selections",
+      "Unique custom text",
+      "Follow-up on the same session with recall of the custom answer"
+    ],
+    "results": [
+      {
+        "provider": "claude",
+        "ok": true,
+        "status": "idle",
+        "tested": [
+          "yes/no",
+          "single choice",
+          "multiple selections",
+          "custom text"
+        ],
+        "multiSelect": true,
+        "receivedCustomAnswer": true,
+        "receivedAllAnswers": true,
+        "followupPassed": true,
+        "session": "ad328fc0-bfb7-489b-b749-131fb623c10d",
+        "durationMs": 70210,
+        "costUsd": 0.007181230000000001,
+        "error": "",
+        "requestCount": 2
+      },
+      {
+        "provider": "codex",
+        "ok": true,
+        "status": "idle",
+        "tested": [
+          "yes/no",
+          "single choice",
+          "multiple selections",
+          "custom text"
+        ],
+        "multiSelect": true,
+        "receivedCustomAnswer": true,
+        "receivedAllAnswers": true,
+        "followupPassed": true,
+        "session": "01a1783c-1b48-7f71-a262-e4515961fc03",
+        "durationMs": 62686,
+        "costUsd": 0.00652,
+        "error": "",
+        "requestCount": 2
+      },
+      {
+        "provider": "gemini",
+        "ok": true,
+        "status": "idle",
+        "tested": [
+          "yes/no",
+          "single choice",
+          "multiple selections",
+          "custom text"
+        ],
+        "multiSelect": true,
+        "receivedCustomAnswer": true,
+        "receivedAllAnswers": true,
+        "followupPassed": true,
+        "session": "fd3c73f5-66f7-44b5-be0f-2f40550d68e4",
+        "durationMs": 153973,
+        "costUsd": 0.035540050000000004,
+        "error": "",
+        "requestCount": 4
+      }
+    ]
+  },
+  "nativeRegressionFindingsFixed": [
+    "Gemini CLI uses the flag value auto_edit, while ACP session/set_mode requires autoEdit. The fixture rejects the incorrect ACP spelling.",
+    "Codex Plan mode emits item/plan/delta and completed plan items separately from ordinary agent messages. These are now rendered in the transcript.",
+    "Gemini session loading can restore earlier settings, so the chosen native mode is explicitly reapplied after loading.",
+    "Native JSON-RPC errors now retain method names and structured details for actionable errors."
+  ],
+  "coverageLimits": [
+    "The live tests cover configured CLI defaults, rather than every selectable model variant.",
+    "Default, Auto review, and Full auto mappings are tested with native-protocol fixtures and Claude SDK callback mocks; actual Auto review availability remains account/model/managed-policy dependent.",
+    "The app preserves native workspace trust and managed permission rules.",
+    "The currently running Council instance has an active task and was left running. Restart after that task finishes to load the new server endpoint."
+  ]
+}

@@ -15,6 +15,18 @@ const base: RunOptions = {
   allowedCommands: ['Bash(npm test*)'],
 };
 
+test('a failure after partial text reports the actual error', () => {
+  const parse = createGeminiParser();
+  parse({ type: 'message', role: 'assistant', content: 'Working on it', delta: true });
+  expect(parse({ type: 'result', status: 'error', error: { message: 'Quota exhausted' } })[0])
+    .toMatchObject({ type: 'result', isError: true, text: 'Quota exhausted' });
+});
+
+test('structured tool output remains readable JSON', () => {
+  expect(createGeminiParser()({ type: 'tool_result', tool_id: 't1', status: 'success', output: { files: ['a.ts'] } })[0])
+    .toMatchObject({ type: 'tool_result', output: '{"files":["a.ts"]}' });
+});
+
 test('work args: stream-json, model, auto_edit approval, prompt on stdin', () => {
   const s = buildGeminiArgs(base);
   expect(s.cmd).toMatch(/gemini/);
@@ -33,9 +45,9 @@ test('resume passes --resume with the session id', () => {
   expect(s.args).toEqual(expect.arrayContaining(['--resume', 'sess-1']));
 });
 
-test('vote args use single-object json output and no approval mode', () => {
+test('vote args stream their terminal result without waiting for process exit', () => {
   const s = buildGeminiArgs({ ...base, purpose: 'vote' });
-  expect(s.args).toEqual(['-o', 'json', '-m', 'flash']);
+  expect(s.args).toEqual(['-o', 'stream-json', '-m', 'flash']);
 });
 
 test('null model omits -m', () => {
@@ -58,7 +70,7 @@ test('parses the stream fixture into session, tool, tool_result, text and result
     output: 'Successfully created and wrote to new file: hello.txt.',
     isError: false,
   });
-  expect(events.filter((e) => e.type === 'text')).toEqual([{ type: 'text', text: 'I created hello.txt containing hi.' }]);
+  expect(events.filter((e) => e.type === 'text')).toEqual([{ type: 'text', text: 'I created hello.txt containing hi.', delta: true }]);
   expect(events.at(-1)).toEqual({
     type: 'result',
     usage: { inputTokens: 9876 - 5000, cachedInputTokens: 5000, outputTokens: 40 + 34 },
@@ -79,6 +91,21 @@ test('error events map to error, and an error-status result is isError', () => {
   ]);
   const [r] = parseGeminiLine({ type: 'result', status: 'error', stats: {} });
   expect(r).toMatchObject({ type: 'result', isError: true, usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 } });
+});
+
+test('result with error status extracts error.message if lastText is empty', () => {
+  const parse = createGeminiParser();
+  const [r] = parse({
+    type: 'result',
+    status: 'error',
+    error: { message: 'Quota exceeded for model' },
+    stats: {},
+  });
+  expect(r).toMatchObject({
+    type: 'result',
+    isError: true,
+    text: 'Quota exceeded for model',
+  });
 });
 
 test('flat stats (older CLIs) are read when there is no models map', () => {

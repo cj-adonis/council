@@ -1,5 +1,6 @@
 import type { Tab, TranscriptItem } from '../types';
 import { elapsed } from './format';
+import { tabPermission } from './permissions';
 
 /**
  * Where a tab sits from the developer's point of view (an idea from
@@ -12,7 +13,7 @@ export const LANE_LABELS: Record<Lane, string> = { 'needs-you': 'Needs you', wor
 
 export type Tone = 'accent' | 'warn' | 'danger' | 'muted' | 'ok';
 
-type LaneTab = Pick<Tab, 'status' | 'stalled'>;
+type LaneTab = Pick<Tab, 'status' | 'stalled' | 'pendingInputs'>;
 
 export function laneOf(tab: LaneTab): Lane {
   switch (tab.status) {
@@ -22,7 +23,7 @@ export function laneOf(tab: LaneTab): Lane {
     case 'handing-off':
       return 'working';
     case 'running':
-      return tab.stalled ? 'needs-you' : 'working';
+      return tab.stalled || tab.pendingInputs?.length ? 'needs-you' : 'working';
     case 'awaiting-start':
     case 'idle':
     case 'failed':
@@ -46,7 +47,8 @@ export function toneOf(tab: LaneTab): Tone {
 }
 
 /** Whether a CLI is producing output right now; the dot pulses only then. */
-export function isStreaming(tab: Pick<Tab, 'status'>): boolean {
+export function isStreaming(tab: Pick<Tab, 'status' | 'pendingInputs'>): boolean {
+  if (tab.pendingInputs?.length) return false;
   return tab.status === 'voting' || tab.status === 'running' || tab.status === 'handing-off';
 }
 
@@ -60,7 +62,8 @@ export function turnStart(tab: Pick<Tab, 'transcript' | 'createdAt'>): string {
 }
 
 /** A short phrase for the tab row, derived rather than the raw status name. */
-export function statusPhrase(tab: Pick<Tab, 'status' | 'stalled' | 'transcript' | 'createdAt'>, now: Date = new Date()): string {
+export function statusPhrase(tab: Pick<Tab, 'status' | 'stalled' | 'transcript' | 'createdAt' | 'pendingInputs'>, now: Date = new Date()): string {
+  if (tab.status === 'running' && tab.pendingInputs?.length) return tab.pendingInputs[0]?.kind === 'question' ? 'Waiting for your answer' : 'Waiting for approval';
   switch (tab.status) {
     case 'drafting':
       return 'Describe the task';
@@ -91,7 +94,7 @@ export interface Chip {
 }
 
 /** Risk and mode chips for a tab (an idea from Hydra's risk signals). */
-export function tabChips(tab: Pick<Tab, 'status' | 'stalled' | 'fullAuto' | 'routing' | 'escalations'>): Chip[] {
+export function tabChips(tab: Pick<Tab, 'status' | 'stalled' | 'fullAuto' | 'routing' | 'escalations' | 'permissionMode' | 'activePermissionMode' | 'worker'>): Chip[] {
   const chips: Chip[] = [];
   if (tab.stalled && tab.status === 'running') chips.push({ label: 'stalled', tone: 'warn', title: 'No output for a while; the worker may be stuck' });
   if (tab.routing?.shiftedFrom) {
@@ -99,7 +102,10 @@ export function tabChips(tab: Pick<Tab, 'status' | 'stalled' | 'fullAuto' | 'rou
     chips.push({ label: 'rerouted', tone: 'warn', title: tab.routing.reason ?? `Routed away from ${fromLabel}` });
   }
   if (tab.escalations > 0) chips.push({ label: tab.escalations === 1 ? 'escalated' : `escalated ×${tab.escalations}`, tone: 'accent', title: 'Handed up to stronger model after failure' });
-  if (tab.fullAuto) chips.push({ label: 'full auto', tone: 'danger', title: 'Runs without the command allow-list' });
+  const mode = tabPermission({ ...tab, permissionMode: tab.status === 'running' ? tab.activePermissionMode ?? tab.permissionMode : tab.permissionMode }, tab.worker?.provider);
+  if (mode === 'full-auto') chips.push({ label: 'full auto', tone: 'danger', title: 'Approvals are bypassed for this turn' });
+  if (mode === 'plan') chips.push({ label: 'plan', tone: 'accent', title: 'Planning without implementing project changes' });
+  if (mode === 'auto') chips.push({ label: 'auto review', tone: 'accent', title: 'The provider reviews eligible actions automatically' });
   return chips;
 }
 

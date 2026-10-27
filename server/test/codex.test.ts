@@ -15,6 +15,34 @@ const base: RunOptions = {
   allowedCommands: [],
 };
 
+test('managed configuration fallbacks are warnings while actual errors stay errors', () => {
+  const message = 'Configured value for `approval_policy` is disallowed by requirements; falling back to required value OnRequest. Details: enterprise requirements';
+  expect(parseCodexLine({ type: 'error', message })).toEqual([{ type: 'error', message, severity: 'warning' }]);
+  expect(parseCodexLine({ type: 'item.completed', item: { type: 'error', message } })).toEqual([{ type: 'error', message, severity: 'warning' }]);
+  expect(parseCodexLine({ type: 'error', message: 'Authentication failed' })).toEqual([{ type: 'error', message: 'Authentication failed' }]);
+  expect(parseCodexLine({ type: 'item.completed', item: { type: 'error', message: 'Authentication failed' } })).toEqual([{ type: 'error', message: 'Authentication failed' }]);
+});
+
+test('tool start and completion produce one call and one result', () => {
+  const parse = createCodexParser();
+  const item = { id: 'cmd1', type: 'command_execution', command: 'npm test' };
+  expect(parse({ type: 'item.started', item })).toHaveLength(1);
+  expect(parse({ type: 'item.started', item })).toEqual([]);
+  expect(parse({ type: 'item.completed', item: { ...item, aggregated_output: 'passed', exit_code: 0 } }))
+    .toEqual([{ type: 'tool_result', id: 'cmd1', output: 'passed', isError: false }]);
+});
+
+test('file changes keep details populated only in the completed item', () => {
+  const parse = createCodexParser();
+  expect(parse({ type: 'item.started', item: { id: 'f1', type: 'file_change', changes: [] } })).toEqual([]);
+  const changes = [{ path: 'a.ts', kind: 'update' }];
+  expect(parse({ type: 'item.completed', item: { id: 'f1', type: 'file_change', changes, status: 'completed' } }))
+    .toEqual([
+      { type: 'tool', id: 'f1', name: 'file_change', input: changes },
+      { type: 'tool_result', id: 'f1', output: '', isError: false },
+    ]);
+});
+
 test('work args: exec with json, cwd, workspace-write sandbox, model, prompt on stdin', () => {
   const s = buildCodexArgs(base);
   expect(s.cmd).toMatch(/codex/);
@@ -63,9 +91,11 @@ test('parses the documented work stream into session, tool, tool_result, text an
   });
 });
 
-test('reasoning items and item.started events produce nothing', () => {
+test('reasoning stays hidden while tool starts are shown immediately', () => {
   expect(parseCodexLine({ type: 'item.completed', item: { id: 'r', type: 'reasoning', text: 'hmm' } })).toEqual([]);
-  expect(parseCodexLine({ type: 'item.started', item: { id: 'c', type: 'command_execution', command: 'ls' } })).toEqual([]);
+  expect(parseCodexLine({ type: 'item.started', item: { id: 'c', type: 'command_execution', command: 'ls' } })).toEqual([
+    { type: 'tool', id: 'c', name: 'command_execution', input: { command: 'ls' } },
+  ]);
 });
 
 test('a failed command execution is an error tool_result', () => {
@@ -102,4 +132,38 @@ test('a rate_limits snapshot becomes a quota event ahead of the result', () => {
 
 test('top-level error events map to error', () => {
   expect(parseCodexLine({ type: 'error', message: 'boom' })).toEqual([{ type: 'error', message: 'boom' }]);
+});
+
+test('mcp_tool_call parses tool and tool_result events', () => {
+  const events = parseCodexLine({
+    type: 'item.completed',
+    item: {
+      id: 'mcp-1',
+      type: 'mcp_tool_call',
+      server: 'filesystem',
+      tool: 'read_file',
+      arguments: { path: 'README.md' },
+      result: { content: 'hello' },
+      status: 'completed',
+    },
+  });
+  expect(events).toEqual([
+    { type: 'tool', id: 'mcp-1', name: 'filesystem.read_file', input: { path: 'README.md' } },
+    { type: 'tool_result', id: 'mcp-1', output: JSON.stringify({ content: 'hello' }), isError: false },
+  ]);
+});
+
+test('web_search parses into tool event with query', () => {
+  const events = parseCodexLine({
+    type: 'item.completed',
+    item: {
+      id: 'ws-1',
+      type: 'web_search',
+      query: 'vitest test runner',
+    },
+  });
+  expect(events).toEqual([
+    { type: 'tool', id: 'ws-1', name: 'web_search', input: { query: 'vitest test runner' } },
+    { type: 'tool_result', id: 'ws-1', output: '', isError: false },
+  ]);
 });

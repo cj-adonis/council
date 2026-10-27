@@ -23,6 +23,21 @@ test('Gemini tools map to the same kinds', () => {
   expect(classifyTool({ name: 'google_web_search', input: { query: 'vitest' } })).toMatchObject({ kind: 'web', subject: 'vitest' });
 });
 
+test('interactive prompt tools map to kind choice', () => {
+  const ask = classifyTool({
+    name: 'ask_user',
+    input: {
+      questions: [{ question: 'Which library should we use?', header: 'Library' }],
+    },
+  });
+  expect(ask).toMatchObject({
+    kind: 'choice',
+    verb: 'Asked',
+    subject: 'Which library should we use?',
+    glyph: '?',
+  });
+});
+
 test('Codex tools, MCP calls and unknown tools', () => {
   expect(classifyTool({ name: 'command_execution', input: { command: 'cargo build' } })).toMatchObject({ kind: 'command', subject: 'cargo build' });
   const fc = classifyTool({ name: 'file_change', input: [{ path: 'hello.txt', kind: 'add' }, { path: 'x.ts', kind: 'update' }] });

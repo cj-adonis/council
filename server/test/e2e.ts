@@ -17,7 +17,7 @@ import type { TabStatus } from '../src/tasks/state.js';
 import { TabStore } from '../src/tasks/store.js';
 import type { Tab } from '../src/tasks/types.js';
 
-const CHEAP_MODEL: Record<Provider, string | null> = { claude: 'claude-haiku-5-5', gemini: 'flash', codex: 'gpt-5.1-codex-mini' };
+const CHEAP_MODEL: Record<Provider, string | null> = { claude: 'claude-haiku-5-5', gemini: 'flash', codex: null };
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -56,7 +56,7 @@ interface Outcome {
 
 async function main(): Promise<void> {
   const wanted = process.argv.find((a) => a.startsWith('--providers='))?.slice('--providers='.length).split(',') as Provider[] | undefined;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'council-e2e-'));
+  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'council-e2e-'));
   const repo = path.join(home, 'repo');
   fs.mkdirSync(repo);
   git(repo, 'init', '-q', '-b', 'main');

@@ -1,4 +1,4 @@
-import type { Provider } from '../adapters/types.js';
+import type { CliHealth, Provider } from '../adapters/types.js';
 import type { Settings } from '../config/settings.js';
 import type { Seat } from './council.js';
 
@@ -22,7 +22,7 @@ function label(w: Seat): string {
  * What the council becomes once the CLIs that are missing or not signed in are filtered out.
  * If none of the configured seats are available, the cheapest available provider votes alone.
  */
-export function effectiveRouting(settings: Pick<Settings, 'seats' | 'models'>, availableProviders: Provider[]): EffectiveRouting {
+export function effectiveRouting(settings: Pick<Settings, 'seats' | 'models'>, availableProviders: Provider[], health: Partial<Record<Provider, CliHealth>> = {}): EffectiveRouting {
   const available = CHEAP_FIRST.filter((p) => availableProviders.includes(p));
   if (available.length === 0) {
     return {
@@ -59,5 +59,14 @@ export function effectiveRouting(settings: Pick<Settings, 'seats' | 'models'>, a
     notes.push(`Only ${NAMES[only]} is set up. Active council: ${seats.map(label).join(', ')}.`);
   }
 
+  const codex = health.codex;
+  if (codex?.plan === 'ChatGPT Subscription' && codex.authSource !== 'api-key' && codex.models?.length) {
+    seats = seats.map((seat) => {
+      if (seat.provider !== 'codex' || !seat.model || codex.models!.includes(seat.model)) return seat;
+      notes.push(`Codex ${seat.model} is not in this account's model list; using the CLI default model.`);
+      return { ...seat, model: null };
+    });
+    seats = seats.filter((seat, index) => seats.findIndex((s) => s.provider === seat.provider && s.model === seat.model) === index);
+  }
   return { available, seats, notes };
 }

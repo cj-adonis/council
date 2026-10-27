@@ -69,6 +69,7 @@ export function VoteCard({ tab, settings, available, onStart }: Props) {
 
   if (!vote) return null;
 
+  const thresholdPct = Math.round((vote.confidenceThreshold ?? 0.8) * 100);
   const awaiting = tab.status === 'awaiting-start';
   const open = manual ?? awaiting;
   const overridden = tab.worker && (provider !== tab.worker.provider || (model || null) !== tab.worker.model);
@@ -81,12 +82,14 @@ export function VoteCard({ tab, settings, available, onStart }: Props) {
       <button className="vote-summary" onClick={() => setManual(!open)} aria-expanded={open}>
         <b>{single ? 'Council of one evaluated' : 'Council evaluated'}</b>
         <span className="chip" style={{ '--c': 'var(--accent)' } as React.CSSProperties}>
+          {vote.requiresConfirmation ? 'Choose worker' : <>
           {Math.round(vote.confidence * 100)}% confident
+          </>}
         </span>
         <span className="chip">
-          Complexity {vote.complexity}/5
+          {vote.requiresConfirmation ? 'Complexity unknown' : <>Complexity {vote.complexity}/5</>}
         </span>
-        {vote.isFallback && <span className="muted xs">deep reasoning fallback</span>}
+        {vote.isFallback && <span className="muted xs">{vote.requiresConfirmation ? 'voting failed' : 'fallback'}</span>}
         {!open && (
           <>
             <span className="muted">·</span>
@@ -124,18 +127,18 @@ export function VoteCard({ tab, settings, available, onStart }: Props) {
             <div style={{ marginBottom: '6px' }}>
               <strong>Selection decision: </strong>
               <span>
-                Assigned to <strong>{PROVIDER_NAMES[vote.selectedSeat.provider]}</strong>
+                {vote.requiresConfirmation ? 'Suggested worker: ' : 'Assigned to '}<strong>{PROVIDER_NAMES[vote.selectedSeat.provider]}</strong>
                 {vote.selectedSeat.model ? <code style={{ marginLeft: '4px', fontSize: '11px' }}>({vote.selectedSeat.model})</code> : null}
                 {' — '}
                 <span className="muted xs">
                   {vote.isFallback
-                    ? 'No seat reached 80% confidence; routed to highest-strength reasoning model'
-                    : `Confident (${Math.round(vote.confidence * 100)}% ≥ 80%) & lowest cost`}
+                    ? vote.reason
+                    : `Confident (${Math.round(vote.confidence * 100)}% ≥ ${thresholdPct}%) & lowest cost`}
                 </span>
               </span>
             </div>
             <div className="muted xs" style={{ borderTop: '1px solid var(--border)', paddingTop: '6px', marginTop: '4px', lineHeight: 1.5 }}>
-              💡 <strong>How Council routes:</strong> Seats inspect the task and self-score confidence. If any seat is confident (≥80%), the lowest-cost model is picked. If no model is confident, Council routes to the deepest reasoning model available.
+              💡 <strong>How Council routes:</strong> Seats inspect the task and self-score confidence. If any available seat is confident (≥{thresholdPct}%), the lowest-cost model is picked. If no model is confident, Council routes to the deepest reasoning model available.
             </div>
           </div>
 
@@ -242,7 +245,15 @@ export function VoteCard({ tab, settings, available, onStart }: Props) {
             {awaiting && (
               <>
                 <span className="grow" />
-                <ProviderSelect value={provider} onChange={setProvider} available={available} ariaLabel="Worker provider" />
+                <ProviderSelect
+                  value={provider}
+                  onChange={(p) => {
+                    setProvider(p);
+                    setModel('');
+                  }}
+                  available={available}
+                  ariaLabel="Worker provider"
+                />
                 <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Worker model">
                   <option value="">default model</option>
                   {settings.models[provider]?.map((m) => (
@@ -257,7 +268,7 @@ export function VoteCard({ tab, settings, available, onStart }: Props) {
                   onClick={async () => {
                     setBusy(true);
                     try {
-                      await onStart(overridden ? { provider, model: model || null } : undefined);
+                      await onStart(overridden || vote.requiresConfirmation ? { provider, model: model || null } : undefined);
                     } finally {
                       setBusy(false);
                     }

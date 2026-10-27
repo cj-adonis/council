@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { defaultBranch, diffStat } from '../src/worktrees/git.js';
+import { defaultBranch, diffStat, gitOk } from '../src/worktrees/git.js';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -12,13 +12,9 @@ function git(cwd: string, ...args: string[]): string {
 function makeRepo(branch = 'main'): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'council-git-'));
   git(dir, 'init', '-q', '-b', branch);
-  git(dir, 'config', 'user.email', 'test@example.com');
-  git(dir, 'config', 'user.name', 'Test');
-  git(dir, 'config', 'commit.gpgsign', 'false');
-  git(dir, 'config', 'core.autocrlf', 'false');
   fs.writeFileSync(path.join(dir, 'README.md'), 'line one\n');
   git(dir, 'add', '-A');
-  git(dir, 'commit', '-q', '-m', 'init');
+  git(dir, '-c', 'user.email=test@example.com', '-c', 'user.name=Test', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
   return dir;
 }
 
@@ -39,7 +35,18 @@ test('diffStat is empty for a clean checkout and tolerant of non-git folders', a
   expect(await diffStat(fs.mkdtempSync(path.join(os.tmpdir(), 'council-nogit-')))).toBe('');
 });
 
-test('defaultBranch reflects the repository', async () => {
+test('defaultBranch reflects master branch', async () => {
   expect(await defaultBranch(makeRepo('master'))).toBe('master');
+});
+
+test('defaultBranch reflects main branch', async () => {
   expect(await defaultBranch(makeRepo('main'))).toBe('main');
+});
+
+test('gitOk returns output on success and throws descriptive error on failure', async () => {
+  const repo = makeRepo();
+  const head = await gitOk(repo, ['rev-parse', 'HEAD']);
+  expect(head).toMatch(/^[0-9a-f]{40}$/);
+
+  await expect(gitOk(repo, ['non-existent-subcommand'])).rejects.toThrow(/git non-existent-subcommand failed/);
 });

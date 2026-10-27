@@ -74,3 +74,18 @@ export function groupActivity(items: TranscriptItem[]): ActivityBlock[] {
   flush();
   return blocks;
 }
+
+/**
+ * Whether the worker is actively running and waiting to produce output
+ * (or between outputs), meaning a thinking/processing indicator should be shown.
+ */
+export function isThinking(running: boolean, items: TranscriptItem[]): boolean {
+  if (!running) return false;
+  // Only the trailing tool run matters; avoid recomputing every historical diff.
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item?.kind !== 'tool' || !item.tool) break;
+    if (item.tool.output === undefined) return false;
+  }
+  return true;
+}

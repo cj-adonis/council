@@ -2,6 +2,22 @@ import { expect, test } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/config/settings.js';
 import { effectiveRouting } from '../src/council/effective.js';
 
+test('automatic routing substitutes CLI default for models excluded by the Codex account cache', () => {
+  const settings = { ...DEFAULT_SETTINGS, seats: [{ provider: 'codex' as const, model: 'gpt-5.1-codex-mini' }, { provider: 'gemini' as const, model: 'flash' }] };
+  const r = effectiveRouting(settings, ['codex', 'gemini'], { codex: { installed: true, authed: true, plan: 'ChatGPT Subscription', models: ['account-model'] } });
+  expect(r.seats).toContainEqual({ provider: 'codex', model: null });
+  expect(r.notes.join(' ')).toMatch(/not in this account/);
+  expect(settings.seats[0]?.model).toBe('gpt-5.1-codex-mini');
+});
+
+test('known account models and API-key model choices remain configured', () => {
+  const settings = { ...DEFAULT_SETTINGS, seats: [{ provider: 'codex' as const, model: 'custom-model' }] };
+  const account = { installed: true, authed: true, plan: 'ChatGPT Subscription', models: ['custom-model'] };
+  expect(effectiveRouting(settings, ['codex', 'claude'], { codex: account }).seats[0]?.model).toBe('custom-model');
+  expect(effectiveRouting(settings, ['codex', 'claude'], { codex: { ...account, plan: 'API Key', models: ['other-model'] } }).seats[0]?.model).toBe('custom-model');
+  expect(effectiveRouting(settings, ['codex', 'claude'], { codex: { ...account, authSource: 'api-key', models: ['other-model'] } }).seats[0]?.model).toBe('custom-model');
+});
+
 test('all providers available: configured seats are used as they are', () => {
   const r = effectiveRouting(DEFAULT_SETTINGS, ['gemini', 'codex', 'claude']);
   expect(r.available).toEqual(['gemini', 'codex', 'claude']);

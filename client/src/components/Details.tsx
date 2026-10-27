@@ -4,6 +4,7 @@ import { filesTouched } from '../lib/tools';
 import type { Tab, TabWorker } from '../types';
 import { Glyph } from './Glyph';
 import { tally } from './VoteCard';
+import { PERMISSION_LABELS, tabPermission } from '../lib/permissions';
 
 function Worker({ w }: { w: TabWorker }) {
   return (
@@ -35,7 +36,7 @@ export function Details({ tab }: { tab: Tab }) {
             </>
           )}
           <span className="k">Mode</span>
-          <span className="v">{tab.fullAuto ? <span className="danger-text">full auto</span> : 'edits allowed, commands restricted'}</span>
+          <span className="v">{PERMISSION_LABELS[tabPermission(tab, tab.worker?.provider)]}</span>
         </div>
       </section>
 

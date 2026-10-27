@@ -26,7 +26,10 @@ export const adapters: Record<Provider, Adapter> = {
 };
 
 export async function checkAll(registry: Record<Provider, Adapter> = adapters): Promise<Record<Provider, CliHealth>> {
-  const entries = await Promise.all(PROVIDERS.map(async (p) => [p, await registry[p].check()] as const));
+  const entries = await Promise.all(PROVIDERS.map(async (p) => {
+    try { return [p, await registry[p].check()] as const; }
+    catch (err) { return [p, { installed: false, authed: false, error: err instanceof Error ? err.message : String(err) }] as const; }
+  }));
   return Object.fromEntries(entries) as Record<Provider, CliHealth>;
 }
 

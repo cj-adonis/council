@@ -9,6 +9,8 @@ export function newId(): string {
 
 /** Tabs live at `<projectsDir>/<projectId>/tabs/<tabId>.json`. */
 export class TabStore {
+  private readonly saves = new Map<string, Promise<void>>();
+
   constructor(public readonly projectsDir: string) {}
 
   /** Stable 12-hex id for a checkout path; case-insensitive on Windows. */
@@ -28,10 +30,21 @@ export class TabStore {
 
   async save(tab: Tab): Promise<void> {
     const file = this.file(tab.projectId, tab.id);
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(tab), 'utf8');
-    await fs.rename(tmp, file);
+    // Capture this version now; queued writes must not read a later mutated tab.
+    const snapshot = JSON.stringify(tab);
+    const previous = this.saves.get(file) ?? Promise.resolve();
+    const save = previous.catch(() => {}).then(async () => {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      await fs.writeFile(tmp, snapshot, 'utf8');
+      await fs.rename(tmp, file);
+    });
+    this.saves.set(file, save);
+    try {
+      await save;
+    } finally {
+      if (this.saves.get(file) === save) this.saves.delete(file);
+    }
   }
 
   async load(projectId: string, tabId: string): Promise<Tab | null> {
@@ -40,6 +53,14 @@ export class TabStore {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw err;
+    }
+  }
+
+  async delete(projectId: string, tabId: string): Promise<void> {
+    try {
+      await fs.unlink(this.file(projectId, tabId));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
   }
 

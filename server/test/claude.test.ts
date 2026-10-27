@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { buildClaudeArgs, parseClaudeLine } from '../src/adapters/claude.js';
+import { buildClaudeArgs, createClaudeParser, parseClaudeLine } from '../src/adapters/claude.js';
 import type { AdapterEvent, RunOptions } from '../src/adapters/types.js';
 import { fixtureLines } from './helpers/fixtures.js';
 
@@ -12,15 +12,45 @@ const base: RunOptions = {
   allowedCommands: ['Bash(npm test*)'],
 };
 
+test('partial text arrives before completion and the complete message is not repeated', () => {
+  const parse = createClaudeParser();
+  parse({ type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } });
+  const delta = (text: string) => parse({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } });
+  expect(delta('Hello ')).toEqual([{ type: 'text', text: 'Hello ', delta: false }]);
+  expect(delta('world')).toEqual([{ type: 'text', text: 'world', delta: true }]);
+  expect(parse({ type: 'assistant', message: { id: 'm1', content: [
+    { type: 'text', text: 'Hello world' },
+    { type: 'tool_use', id: 'tool1', name: 'Read', input: { file_path: 'a.ts' } },
+  ] } })).toEqual([{ type: 'tool', id: 'tool1', name: 'Read', input: { file_path: 'a.ts' } }]);
+  parse({ type: 'stream_event', event: { type: 'message_start', message: { id: 'm2' } } });
+  expect(delta('Next message')).toEqual([{ type: 'text', text: 'Next message', delta: false }]);
+});
+
+test('stream parser supports complete-only output and recovers missing final deltas', () => {
+  const parse = createClaudeParser();
+  expect(parse({ type: 'assistant', message: { content: [{ type: 'text', text: 'Complete' }] } }))
+    .toEqual([{ type: 'text', text: 'Complete' }]);
+  parse({ type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } });
+  parse({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hel' } } });
+  expect(parse({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Hello' }] } }))
+    .toEqual([{ type: 'text', text: 'lo', delta: true }]);
+});
+
+test('Claude result errors are retained when there is no result string', () => {
+  expect(parseClaudeLine({ type: 'result', is_error: true, errors: ['Request timed out', 'Retry exhausted'] })[0])
+    .toMatchObject({ type: 'result', isError: true, text: 'Request timed out\nRetry exhausted' });
+});
+
 test('work args: print mode, stream-json, model, resume, acceptEdits and allowed tools', () => {
   const s = buildClaudeArgs({ ...base, resumeId: 'abc' });
-  expect(s.cmd).toBe('claude');
+  expect(s.cmd).toMatch(/(?:^|[\\/])claude(?:\.exe|\.cmd)?$/i);
   expect(s.args).toEqual(
     expect.arrayContaining([
       '-p',
       '--output-format',
       'stream-json',
       '--verbose',
+      '--include-partial-messages',
       '--model',
       'claude-sonnet-5-5',
       '--resume',
@@ -35,11 +65,11 @@ test('work args: print mode, stream-json, model, resume, acceptEdits and allowed
   expect(s.stdin).toBe('do it');
 });
 
-test('fullAuto uses --dangerously-skip-permissions instead of acceptEdits', () => {
+test('legacy Claude fullAuto requests native Auto review without bypass flags', () => {
   const s = buildClaudeArgs({ ...base, fullAuto: true });
-  expect(s.args).toContain('--dangerously-skip-permissions');
-  expect(s.args).not.toContain('--permission-mode');
-  expect(s.args).not.toContain('--allowedTools');
+  expect(s.args).toEqual(expect.arrayContaining(['--permission-mode', 'auto']));
+  expect(s.args).not.toContain('--dangerously-skip-permissions');
+  expect(s.args).not.toContain('--allow-dangerously-skip-permissions');
 });
 
 test('vote args disable tools, cap budget, pass the json schema and skip persistence', () => {

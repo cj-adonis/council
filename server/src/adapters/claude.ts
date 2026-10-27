@@ -1,6 +1,8 @@
 import type { JsonObject } from './jsonl.js';
 import { runCli } from './run.js';
 import { resolveCommand } from './spawn.js';
+import { runClaudeInteractive } from './claude-interactive.js';
+import { claudePermission, selectedPermission } from './permissions.js';
 import { isoFromEpoch, num, VOTE_MAX_BUDGET_USD, type AdapterEvent, type CliSpec, type QuotaWindow, type RunOptions } from './types.js';
 
 const CLAUDE_WINDOW_NAMES: Record<string, string> = { five_hour: '5-hour', seven_day: '7-day' };
@@ -21,21 +23,19 @@ function quotaFromRateLimit(o: JsonObject): AdapterEvent[] {
 }
 
 /**
- * Claude Code in print mode. Work runs edit freely but shell commands are limited
- * to the allow-list unless fullAuto; votes and summaries run tool-less and capped.
+ * Claude Code in print mode. Work runs use the selected native permission mode;
+ * votes and summaries run tool-less and capped.
  */
 export function buildClaudeArgs(o: RunOptions): CliSpec {
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   if (o.model) args.push('--model', o.model);
 
   if (o.purpose === 'work') {
+    args.push('--include-partial-messages');
     if (o.resumeId) args.push('--resume', o.resumeId);
-    if (o.fullAuto) {
-      args.push('--dangerously-skip-permissions');
-    } else {
-      args.push('--permission-mode', 'acceptEdits');
-      if (o.allowedCommands.length > 0) args.push('--allowedTools', ...o.allowedCommands);
-    }
+    const mode = selectedPermission(o, 'claude');
+    args.push('--permission-mode', claudePermission(mode));
+    if (mode !== 'plan' && o.allowedCommands.length > 0) args.push('--allowedTools', ...o.allowedCommands);
   } else {
     args.push('--tools', '', '--no-session-persistence', '--max-budget-usd', String(VOTE_MAX_BUDGET_USD));
     if (o.jsonSchema) args.push('--json-schema', JSON.stringify(o.jsonSchema));
@@ -106,7 +106,9 @@ export function parseClaudeLine(o: JsonObject): AdapterEvent[] {
           ? JSON.stringify(o.structured_output)
           : typeof o.result === 'string'
             ? o.result
-            : undefined;
+            : Array.isArray(o.errors)
+              ? o.errors.map(String).join('\n')
+              : undefined;
       return [
         {
           type: 'result',
@@ -128,6 +130,55 @@ export function parseClaudeLine(o: JsonObject): AdapterEvent[] {
   }
 }
 
+/** Emit text as it arrives, then suppress the same text in completed assistant messages. */
+export function createClaudeParser(): (o: JsonObject) => AdapterEvent[] {
+  const messages = new Map<string, string>();
+  const active = new Map<string, string>();
+  return (o) => {
+    const scope = typeof o.parent_tool_use_id === 'string' ? o.parent_tool_use_id : '';
+    if (o.type === 'stream_event') {
+      const event = o.event as JsonObject | undefined;
+      if (!event || typeof event !== 'object') return [];
+      if (event.type === 'message_start') {
+        const message = event.message as JsonObject | undefined;
+        if (typeof message?.id === 'string') active.set(scope, message.id);
+      }
+      if (event.type === 'content_block_delta') {
+        const delta = event.delta as JsonObject | undefined;
+        const id = active.get(scope);
+        if (id && delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text !== '') {
+          const continuing = messages.has(id);
+          messages.set(id, (messages.get(id) ?? '') + delta.text);
+          return [{ type: 'text', text: delta.text, delta: continuing }];
+        }
+      }
+      return [];
+    }
+    const events = parseClaudeLine(o);
+    if (o.type !== 'assistant') return events;
+    const message = o.message as JsonObject | undefined;
+    const id = typeof message?.id === 'string' ? message.id : '';
+    let streamed = messages.get(id) ?? '';
+    const out: AdapterEvent[] = [];
+    for (const event of events) {
+      if (event.type !== 'text' || streamed === '') {
+        out.push(event);
+      } else if (streamed.startsWith(event.text)) {
+        streamed = streamed.slice(event.text.length);
+      } else if (event.text.startsWith(streamed)) {
+        out.push({ type: 'text', text: event.text.slice(streamed.length), delta: true });
+        streamed = '';
+      } else {
+        out.push(event);
+      }
+    }
+    if (streamed) messages.set(id, streamed);
+    else messages.delete(id);
+    return out;
+  };
+}
+
 export function runClaude(opts: RunOptions): AsyncIterable<AdapterEvent> {
-  return runCli(buildClaudeArgs(opts), { cwd: opts.cwd, env: opts.env, signal: opts.signal }, parseClaudeLine);
+  if (opts.purpose === 'work' && opts.requestInput) return runClaudeInteractive(opts);
+  return runCli(buildClaudeArgs(opts), { cwd: opts.cwd, env: opts.env, signal: opts.signal, stopAtResult: opts.purpose === 'vote' }, createClaudeParser());
 }

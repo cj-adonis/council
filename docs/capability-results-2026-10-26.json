@@ -1,0 +1,279 @@
+{
+  "generatedAt": "2026-10-26T08:44:52.603Z",
+  "scope": "Local TaskEngine and CLI integration with a synthetic project-local coding skill, a duration parser, and simple/complex routing prompts.",
+  "build": {
+    "command": "npm run build",
+    "passed": true
+  },
+  "tests": {
+    "server": {
+      "total": 234,
+      "initialPassed": 232,
+      "initialTimedOut": 2,
+      "initialCommandPassed": false,
+      "retryCommand": "npm -w server test -- test/gitdiff.test.ts --testTimeout=120000",
+      "retryPassed": 5,
+      "allAssertionsEventuallyPassed": true
+    },
+    "client": {
+      "command": "npm -w client test",
+      "passed": 79,
+      "total": 79
+    },
+    "benchmarkTypeCheck": {
+      "passed": true
+    }
+  },
+  "findings": [
+    {
+      "severity": "high",
+      "issue": "The default Codex voting model gpt-5.1-codex-mini is rejected by this ChatGPT account.",
+      "evidence": "Both live routing prompts returned model_not_found."
+    },
+    {
+      "severity": "high",
+      "issue": "Both routing prompts produced no valid votes.",
+      "evidence": "Claude and Gemini hit the 60000 ms seat limit; Codex rejected its configured model. Both tasks used fallback routing."
+    },
+    {
+      "severity": "high",
+      "issue": "CLI completion is insufficient evidence of task completion.",
+      "evidence": "The existing Claude README smoke test finished idle with editedInPlace=false after tool permission refusals."
+    },
+    {
+      "severity": "medium",
+      "issue": "CLI health detection is sensitive to startup latency.",
+      "evidence": "Direct versions were available for all three providers, but 30000 ms probes intermittently marked Codex and Gemini unavailable."
+    },
+    {
+      "severity": "medium",
+      "issue": "The existing e2e fixture uses abbreviated Windows temporary paths.",
+      "evidence": "Claude rejected CJ8959~1.ADO paths as suspicious. The added harness normalizes temporary paths using fs.realpathSync.native."
+    },
+    {
+      "severity": "medium",
+      "issue": "Default test limits are too short for some local Git integration checks on this machine.",
+      "evidence": "Two tests exceeded 60000 ms; all five Git tests passed with a 120000 ms limit."
+    }
+  ],
+  "acceptanceRechecks": [
+    {
+      "run": "council-capability-h2qdH5",
+      "provider": "claude",
+      "acceptancePassed": false,
+      "error": "node:internal/modules/run_main:107\r\n    triggerUncaughtException(\r\n    ^\r\n\r\nAssertionError [ERR_ASSERTION]: 0ms\r\n\r\n'0ms' !== 0\r\n\r\n    at file:///C:/Users/cj.adonis/council/[eval1]:5:10 {\r\n  generatedMessage: false,\r\n  code: 'ERR_ASSERTION',\r\n  actual: '0ms',\r\n  expected: 0,\r\n  operator: 'strictEqual',\r\n  diff: 'simple'\r\n}\r\n\r\nNode.js v24.13.0\r\n"
+    },
+    {
+      "run": "council-capability-h2qdH5",
+      "provider": "codex",
+      "acceptancePassed": true,
+      "output": "21 independent acceptance cases passed",
+      "skillUsed": true
+    },
+    {
+      "run": "council-capability-DvNADQ",
+      "provider": "claude",
+      "acceptancePassed": false,
+      "error": "node:internal/modules/run_main:107\r\n    triggerUncaughtException(\r\n    ^\r\n\r\nAssertionError [ERR_ASSERTION]: 0ms\r\n\r\n'0ms' !== 0\r\n\r\n    at file:///C:/Users/cj.adonis/council/[eval1]:5:10 {\r\n  generatedMessage: false,\r\n  code: 'ERR_ASSERTION',\r\n  actual: '0ms',\r\n  expected: 0,\r\n  operator: 'strictEqual',\r\n  diff: 'simple'\r\n}\r\n\r\nNode.js v24.13.0\r\n"
+    },
+    {
+      "run": "council-capability-DvNADQ",
+      "provider": "codex",
+      "acceptancePassed": false,
+      "error": "node:internal/modules/run_main:107\r\n    triggerUncaughtException(\r\n    ^\r\n\r\nAssertionError [ERR_ASSERTION]: 0ms\r\n\r\n'0ms' !== 0\r\n\r\n    at file:///C:/Users/cj.adonis/council/[eval1]:5:10 {\r\n  generatedMessage: false,\r\n  code: 'ERR_ASSERTION',\r\n  actual: '0ms',\r\n  expected: 0,\r\n  operator: 'strictEqual',\r\n  diff: 'simple'\r\n}\r\n\r\nNode.js v24.13.0\r\n"
+    },
+    {
+      "run": "council-capability-upRvpM",
+      "provider": "claude",
+      "acceptancePassed": false,
+      "error": "node:internal/modules/run_main:107\r\n    triggerUncaughtException(\r\n    ^\r\n\r\nAssertionError [ERR_ASSERTION]: 0ms\r\n\r\n'0ms' !== 0\r\n\r\n    at file:///C:/Users/cj.adonis/council/[eval1]:5:10 {\r\n  generatedMessage: false,\r\n  code: 'ERR_ASSERTION',\r\n  actual: '0ms',\r\n  expected: 0,\r\n  operator: 'strictEqual',\r\n  diff: 'simple'\r\n}\r\n\r\nNode.js v24.13.0\r\n"
+    }
+  ],
+  "runs": [
+    {
+      "label": "initial-coding",
+      "artifactDirectory": "council-capability-h2qdH5",
+      "workerTimeoutMs": 180000,
+      "outcomes": [
+        {
+          "provider": "claude",
+          "ok": false,
+          "error": "Timed out in running"
+        },
+        {
+          "provider": "codex",
+          "ok": false,
+          "error": "Timed out in running"
+        },
+        {
+          "provider": "gemini",
+          "skipped": "CLI unavailable or not signed in"
+        }
+      ]
+    },
+    {
+      "label": "repeat-coding",
+      "artifactDirectory": "council-capability-DvNADQ",
+      "workerTimeoutMs": 180000,
+      "outcomes": [
+        {
+          "provider": "claude",
+          "ok": false,
+          "error": "Timed out in running"
+        },
+        {
+          "provider": "codex",
+          "ok": false,
+          "error": "Timed out in running"
+        },
+        {
+          "provider": "gemini",
+          "skipped": "CLI unavailable or not signed in"
+        }
+      ],
+      "routing": []
+    },
+    {
+      "label": "claude-normalized-windows-path",
+      "artifactDirectory": "council-capability-upRvpM",
+      "workerTimeoutMs": 180000,
+      "outcomes": [
+        {
+          "provider": "claude",
+          "ok": false,
+          "error": "Timed out in running"
+        }
+      ],
+      "routing": []
+    },
+    {
+      "label": "default-council-routing",
+      "artifactDirectory": "council-capability-XgbY9L",
+      "workerTimeoutMs": 180000,
+      "outcomes": [],
+      "routing": [
+        {
+          "task": "Fix a spelling typo in README.md.",
+          "confidenceThreshold": 0.8,
+          "seats": [
+            {
+              "seat": {
+                "provider": "gemini",
+                "model": "flash-lite"
+              },
+              "vote": null,
+              "costUsd": 0,
+              "durationMs": 60016,
+              "error": "timed out after 60000 ms",
+              "overCeiling": false
+            },
+            {
+              "seat": {
+                "provider": "codex",
+                "model": "gpt-5.1-codex-mini"
+              },
+              "vote": null,
+              "costUsd": 0,
+              "durationMs": 30991,
+              "error": "{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'gpt-5.1-codex-mini' model is not supported when using Codex with a ChatGPT account.\",\"code\":\"model_not_found\"}}",
+              "overCeiling": false,
+              "text": "{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'gpt-5.1-codex-mini' model is not supported when using Codex with a ChatGPT account.\",\"code\":\"model_not_found\"}}"
+            },
+            {
+              "seat": {
+                "provider": "claude",
+                "model": "claude-haiku-5-5"
+              },
+              "vote": null,
+              "costUsd": 0,
+              "durationMs": 60014,
+              "error": "timed out after 60000 ms",
+              "overCeiling": false
+            }
+          ],
+          "selectedSeat": {
+            "provider": "claude",
+            "model": "claude-haiku-5-5"
+          },
+          "confidence": 0.5,
+          "complexity": 3,
+          "reason": "No seat reached 80% confidence; routed to strongest available model",
+          "isFallback": true
+        },
+        {
+          "task": "Design and implement a durable concurrent job scheduler with crash recovery, idempotency, cancellation, persistence, and tests across API and storage modules.",
+          "confidenceThreshold": 0.8,
+          "seats": [
+            {
+              "seat": {
+                "provider": "gemini",
+                "model": "flash-lite"
+              },
+              "vote": null,
+              "costUsd": 0,
+              "durationMs": 60054,
+              "error": "timed out after 60000 ms",
+              "overCeiling": false
+            },
+            {
+              "seat": {
+                "provider": "codex",
+                "model": "gpt-5.1-codex-mini"
+              },
+              "vote": null,
+              "costUsd": 0,
+              "durationMs": 44815,
+              "error": "{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'gpt-5.1-codex-mini' model is not supported when using Codex with a ChatGPT account.\",\"code\":\"model_not_found\"}}",
+              "overCeiling": false,
+              "text": "{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'gpt-5.1-codex-mini' model is not supported when using Codex with a ChatGPT account.\",\"code\":\"model_not_found\"}}"
+            },
+            {
+              "seat": {
+                "provider": "claude",
+                "model": "claude-haiku-5-5"
+              },
+              "vote": null,
+              "costUsd": 0,
+              "durationMs": 60004,
+              "error": "timed out after 60000 ms",
+              "overCeiling": false
+            }
+          ],
+          "selectedSeat": {
+            "provider": "claude",
+            "model": "claude-haiku-5-5"
+          },
+          "confidence": 0.5,
+          "complexity": 3,
+          "reason": "No seat reached 80% confidence; routed to strongest available model",
+          "isFallback": true
+        }
+      ]
+    },
+    {
+      "label": "gemini-coding",
+      "artifactDirectory": "council-capability-6ZxSUP",
+      "workerTimeoutMs": 180000,
+      "outcomes": [
+        {
+          "provider": "gemini",
+          "ok": false,
+          "error": "Timed out in running"
+        }
+      ],
+      "routing": []
+    }
+  ],
+  "limitations": [
+    "Small parser task and synthetic skill; results apply to this machine and current CLI/account configuration.",
+    "This run tested the engine and provider CLIs; it did not automate the browser UI.",
+    "A timed-out worker does not establish that the model cannot solve the task.",
+    "Some checks overlapped; local process contention may have contributed to timeout measurements."
+  ],
+  "rerun": [
+    "npm run capability",
+    "npm run capability -- --providers=codex --timeout-ms=300000",
+    "npm run capability -- --routing-only"
+  ],
+  "assessment": "Codex demonstrated correct code generation and skill-instruction following in one retained artifact, but no three-minute coding run completed successfully. Default council routing produced no valid votes. Current configuration is not yet reliable for unattended coding tasks."
+}

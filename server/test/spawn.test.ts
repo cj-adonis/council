@@ -71,20 +71,28 @@ test('aborting kills the whole process tree, not just the wrapper', async () => 
   expect(gpid).toBeGreaterThan(0);
   expect(wasAlive).toBe(true);
   for (let i = 0; i < 25 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
-  if (alive()) {
+  const survivedCancellation = alive();
+  if (survivedCancellation) {
     try {
       process.kill(gpid);
     } catch {
       /* already gone */
     }
   }
-  expect(alive()).toBe(false);
+  expect(survivedCancellation).toBe(false);
 });
 
 test('resolveCommand returns the .cmd shim on win32 when one is on PATH', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'council-shim-'));
   fs.writeFileSync(path.join(dir, 'foo.cmd'), '@echo off\r\n');
   expect(resolveCommand('foo', { PATH: dir }, 'win32')).toBe(path.join(dir, 'foo.cmd'));
+});
+
+test('Windows executable discovery prefers the .cmd launcher over npm Unix shell shims', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'council-windows-shims-'));
+  fs.writeFileSync(path.join(dir, 'codex'), '#!/bin/sh\n');
+  fs.writeFileSync(path.join(dir, 'codex.cmd'), '@echo off\r\n');
+  expect(resolveCommand('codex', { PATH: dir }, 'win32')).toBe(path.join(dir, 'codex.cmd'));
 });
 
 test('resolveCommand returns the bare name when no shim exists', () => {

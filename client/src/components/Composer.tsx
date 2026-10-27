@@ -1,19 +1,25 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { api } from '../api';
-import { DEFAULT_PERMISSION, followUpSelection, fullAutoFor, selectionChangesWorker, type PermissionChoice } from '../lib/composerMode';
+import { followUpSelection, selectionChangesWorker } from '../lib/composerMode';
+import { tabPermission } from '../lib/permissions';
+import { PermissionSelect } from './PermissionSelect';
 import { PROVIDER_NAMES } from '../lib/format';
+import { extractOptions } from '../lib/options';
+import { expandSkillCommand, skillCommandAt, skillInstruction } from '../lib/skills';
 import { autoLabel, isSetUp, notSetUpTitle, type Availability } from '../lib/routing';
-import { PROVIDERS, type PlanInfo, type Provider, type Settings, type SkillInfo, type SubmitMode, type Tab } from '../types';
+import { PROVIDERS, type PermissionMode, type Provider, type Settings, type SkillInfo, type SubmitMode, type Tab } from '../types';
 import { Glyph } from './Glyph';
 
 interface Props {
   tab: Tab;
   settings: Settings;
   available: Availability;
-  onSubmit: (text: string, mode: SubmitMode, fullAuto: boolean) => Promise<void>;
-  onSend: (text: string) => Promise<void>;
+  onSubmit: (text: string, mode: SubmitMode, permissionMode: PermissionMode) => Promise<void>;
+  onSend: (text: string, opts?: { fullAuto?: boolean; permissionMode?: PermissionMode }) => Promise<void>;
   /** A change of worker from the follow-up selector; behaves like the header's Switch worker. */
   onSwitch: (provider: Provider, model: string | null) => Promise<void>;
+  onPermissionMode: (mode: PermissionMode) => Promise<void>;
+  onEscalate?: () => Promise<void>;
 }
 
 function hintFor(tab: Tab): string {
@@ -33,69 +39,77 @@ function hintFor(tab: Tab): string {
   }
 }
 
-export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch }: Props) {
+export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch, onPermissionMode, onEscalate }: Props) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState<'auto' | Provider>('auto');
   const [model, setModel] = useState('');
   const [busy, setBusy] = useState(false);
-  const [plans, setPlans] = useState<PlanInfo[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [planNotice, setPlanNotice] = useState<string | null>(null);
+  const [skillsLoading, setSkillsLoading] = useState(true);
+  const [skillsError, setSkillsError] = useState('');
+  const [skillsRefresh, setSkillsRefresh] = useState(0);
+  const messageInput = useRef<HTMLTextAreaElement>(null);
+  const skillMenuId = useId();
+  const [cursor, setCursor] = useState(0);
+  const [skillIndex, setSkillIndex] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState(false);
   const [allowedCommands, setAllowedCommands] = useState(() => (settings.allowedCommands ?? []).join('\n'));
   const [showCommands, setShowCommands] = useState(false);
 
-  const alwaysKey = `council:always-allow:${tab.projectId}`;
-  const [permission, setPermission] = useState<PermissionChoice>(() => {
-    try {
-      return localStorage.getItem(alwaysKey) === 'true' ? 'always' : DEFAULT_PERMISSION;
-    } catch {
-      return DEFAULT_PERMISSION;
-    }
-  });
-
+  const [draftPermissions, setDraftPermissions] = useState<Record<string, PermissionMode>>({});
   const drafting = tab.status === 'drafting';
+  const draftKey = JSON.stringify([mode, model || null]);
+  const permission = drafting ? (draftPermissions[draftKey] ?? 'accept-edits') : tabPermission(tab, tab.worker?.provider);
+  const permissionProvider = drafting ? (mode === 'auto' ? null : mode) : tab.worker?.provider ?? null;
   const canSend = drafting || tab.status === 'idle' || tab.status === 'failed';
   const current = followUpSelection(tab);
+  const slashCommand = skillCommandAt(text, cursor);
+  const showSkillMenu = canSend && !slashDismissed && slashCommand !== null;
+  const skillMatches = !showSkillMenu ? []
+    : skills.filter(skill => skill.name.toLowerCase().includes(slashCommand!.query.toLowerCase()));
   const [followModel, setFollowModel] = useState(current?.model ?? '');
 
+  const lastItem = useMemo(() => {
+    return [...tab.transcript].reverse().find((it) => it.kind === 'assistant' || (it.kind === 'tool' && it.tool));
+  }, [tab.transcript]);
+
+  const quickOptions = useMemo(() => {
+    if (!lastItem || tab.status === 'closed' || tab.status === 'running' || tab.status === 'voting') return [];
+    return extractOptions(lastItem.text, lastItem.tool?.input);
+  }, [lastItem, tab.status]);
+
   useEffect(() => {
-    if (drafting) {
-      api.plans(tab.projectId)
-        .then((res) => {
-          setPlans(res.plans);
-          setSkills(res.skills);
-        })
-        .catch(() => {});
-    }
-  }, [drafting, tab.projectId]);
+    let cancelled = false;
+    setSkills([]);
+    setSkillsLoading(true);
+    setSkillsError('');
+    api.skills(tab.projectId)
+      .then(res => { if (!cancelled) setSkills(res.skills); })
+      .catch(error => { if (!cancelled) setSkillsError(error instanceof Error ? error.message : 'Could not load skills.'); })
+      .finally(() => { if (!cancelled) setSkillsLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab.projectId, skillsRefresh]);
+
+  useEffect(() => {
+    if (skillMatches.length) document.getElementById(`${skillMenuId}-${skillIndex}`)?.scrollIntoView?.({ block: 'nearest' });
+  }, [text, skillIndex, skillMenuId, skillMatches.length]);
 
   // The selector reads as the current worker; keep the model field in step when the worker changes.
   useEffect(() => setFollowModel(current?.model ?? ''), [current?.provider, current?.model]);
   const modelChanged = current !== null && selectionChangesWorker(current, current.provider, followModel);
   const hint = hintFor(tab);
 
-  const setPerm = (p: PermissionChoice) => {
-    setPermission(p);
-    try {
-      if (p === 'always') {
-        localStorage.setItem(alwaysKey, 'true');
-      } else {
-        localStorage.removeItem(alwaysKey);
-      }
-    } catch {
-      /* ignore */
-    }
-  };
+  const setPerm = (value: PermissionMode) => setDraftPermissions(previous => ({ ...previous, [draftKey]: value }));
 
-  const go = async () => {
-    const t = text.trim();
+  const go = async (overrideText?: string, opts?: { fullAuto?: boolean; permissionMode?: PermissionMode }) => {
+    const t = expandSkillCommand((overrideText ?? text).trim(), skills);
     if (!t || !canSend || busy) return;
     setBusy(true);
     try {
       if (drafting) {
         const m: SubmitMode = mode === 'auto' ? { kind: 'auto' } : { kind: 'manual', provider: mode, model: model || null };
-        const isFullAuto = fullAutoFor(permission);
-        if (!isFullAuto) {
+        const chosenPermission = opts?.permissionMode ?? (opts?.fullAuto === undefined ? permission : opts.fullAuto ? 'full-auto' : 'accept-edits');
+        if (chosenPermission !== 'full-auto') {
           const parsed = allowedCommands.split('\n').map((l) => l.trim()).filter(Boolean);
           if (JSON.stringify(parsed) !== JSON.stringify(settings.allowedCommands)) {
             try {
@@ -105,18 +119,36 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch 
             }
           }
         }
-        await onSubmit(t, m, isFullAuto);
+        await onSubmit(t, m, chosenPermission);
       } else {
-        await onSend(t);
+        await onSend(t, opts);
       }
       setText('');
-      setPlanNotice(null);
     } finally {
       setBusy(false);
     }
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing) return;
+    if (showSkillMenu && skillsLoading && e.key === 'Enter') { e.preventDefault(); return; }
+    if (showSkillMenu && e.key === 'Escape') {
+      e.preventDefault();
+      setSlashDismissed(true);
+      return;
+    }
+    if (skillMatches.length && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSkillIndex(index => (index + (e.key === 'ArrowDown' ? 1 : skillMatches.length - 1)) % skillMatches.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        completeSkill(skillMatches[skillIndex] ?? skillMatches[0]!);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void go();
@@ -134,72 +166,79 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch 
     );
   };
 
-  const onSelectPlan = (planPath: string) => {
-    const p = plans.find((x) => x.path === planPath);
-    if (!p) return;
-    const planText = `Execute the approved plan at ${p.path} using executing-plans`;
-    setText(text.trim() ? `${text.trim()}\n\n${planText}` : planText);
-    setPlanNotice(`Approved plan selected: ${p.title || p.name}.`);
-  };
-
   const onSelectSkill = (skillName: string) => {
     if (!skillName) return;
     const prefix = text.trim() ? `${text.trim()}\n\n` : '';
-    setText(`${prefix}Use the \`${skillName}\` skill for this task.`);
+    setText(`${prefix}${skillInstruction(skills.find(skill => skill.name === skillName)!)}`);
   };
+
+  const completeSkill = (skill: SkillInfo) => {
+    if (!slashCommand) return;
+    const rest = text.slice(slashCommand.end);
+    const token = `/${skill.name}`;
+    const separator = /^[ \t]/.test(rest) ? '' : ' ';
+    const next = text.slice(0, slashCommand.start) + token + separator + rest;
+    const nextCursor = slashCommand.start + token.length + 1;
+    setText(next);
+    setCursor(nextCursor);
+    setSlashDismissed(true);
+    messageInput.current?.focus();
+    requestAnimationFrame(() => messageInput.current?.setSelectionRange(nextCursor, nextCursor));
+  };
+
+  const permissionControl = (<PermissionSelect value={permission} provider={permissionProvider}
+        active={tab.status === 'running' ? tab.activePermissionMode : undefined}
+        disabled={busy || ['voting', 'handing-off', 'closed'].includes(tab.status)}
+        onChange={drafting ? setPerm : onPermissionMode} />);
 
   return (
     <div className="composer">
       {drafting && (
         <>
-          {(plans.length > 0 || skills.length > 0) && (
+          {skills.length > 0 && (
             <div className="composer-row" style={{ paddingBottom: '4px', gap: '8px' }}>
-              {plans.length > 0 && (
-                <select
-                  className="sm"
-                  value=""
-                  onChange={(e) => onSelectPlan(e.target.value)}
-                  aria-label="Approved plans"
-                  title="Insert an approved plan"
-                >
-                  <option value="" disabled>📋 Approved Plans ({plans.length})</option>
-                  {plans.map((p) => (
-                    <option key={p.path} value={p.path}>
-                      {p.title || p.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {skills.length > 0 && (
-                <select
-                  className="sm"
-                  value=""
-                  onChange={(e) => onSelectSkill(e.target.value)}
-                  aria-label="Agent skills"
-                  title="Insert an agent skill into the task prompt"
-                >
-                  <option value="" disabled>⚡ Skills ({skills.length})</option>
-                  {skills.map((s) => (
-                    <option key={s.name} value={s.name}>
-                      {s.name} ({s.source})
-                    </option>
-                  ))}
-                </select>
-              )}
-              {planNotice && (
-                <span className="chip" style={{ '--c': 'var(--ok)', fontSize: 'var(--fs-xs)' } as React.CSSProperties}>
-                  {planNotice}
-                </span>
-              )}
+              <select
+                className="sm"
+                value=""
+                onChange={(e) => onSelectSkill(e.target.value)}
+                aria-label="Agent skills"
+                title="Insert an agent skill into the task prompt"
+              >
+                <option value="" disabled>⚡ Skills ({skills.length})</option>
+                {skills.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.name} ({s.source})
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
           <div className="composer-row">
             <span className="seg" role="radiogroup" aria-label="Routing">
-              <button className={mode === 'auto' ? 'on' : ''} onClick={() => setMode('auto')} role="radio" aria-checked={mode === 'auto'} title="Council decides, from the providers that are set up">
+              <button
+                className={mode === 'auto' ? 'on' : ''}
+                onClick={() => {
+                  setMode('auto');
+                  setModel('');
+                }}
+                role="radio"
+                aria-checked={mode === 'auto'}
+                title="Council decides, from the providers that are set up"
+              >
                 {autoLabel(available)}
               </button>
-              {PROVIDERS.map((p) => providerButton(p, mode === p, () => setMode(p), `Skip the vote and send to ${PROVIDER_NAMES[p]}`))}
+              {PROVIDERS.map((p) =>
+                providerButton(
+                  p,
+                  mode === p,
+                  () => {
+                    setMode(p);
+                    setModel('');
+                  },
+                  `Skip the vote and send to ${PROVIDER_NAMES[p]}`,
+                ),
+              )}
             </span>
             {mode !== 'auto' && (
               <select
@@ -217,55 +256,11 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch 
               </select>
             )}
             <span className="spacer" />
-
-            {/* Intuitive command execution permission prompt */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span className="muted xs">Commands:</span>
-              <span className="seg" role="radiogroup" aria-label="Command execution permission">
-                <button
-                  type="button"
-                  className={permission === 'restricted' ? 'on' : ''}
-                  aria-checked={permission === 'restricted'}
-                  role="radio"
-                  onClick={() => {
-                    setPerm('restricted');
-                    setShowCommands(true);
-                  }}
-                  title="Edits are auto-approved; shell commands are held to the allow-list and Codex keeps its sandbox"
-                >
-                  🛡️ Restricted
-                </button>
-                <button
-                  type="button"
-                  className={permission === 'full-auto' ? 'on' : ''}
-                  aria-checked={permission === 'full-auto'}
-                  role="radio"
-                  onClick={() => {
-                    setPerm('full-auto');
-                    setShowCommands(false);
-                  }}
-                  title="Full auto for this task: no sandbox and no approvals — the worker can run any command"
-                >
-                  ⚡ Full auto
-                </button>
-                <button
-                  type="button"
-                  className={permission === 'always' ? 'on' : ''}
-                  aria-checked={permission === 'always'}
-                  role="radio"
-                  onClick={() => {
-                    setPerm('always');
-                    setShowCommands(false);
-                  }}
-                  title="Full auto for every task in this project, until you change it back"
-                >
-                  ⚡ Always full auto
-                </button>
-              </span>
-            </div>
+            {permissionControl}
+            <button type="button" className="quiet sm composer-commands" aria-expanded={showCommands} onClick={() => setShowCommands(value => !value)}>Commands</button>
           </div>
 
-          {permission === 'restricted' && showCommands && (
+          {showCommands && (
             <div
               className="card"
               style={{
@@ -342,34 +337,146 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch 
             </button>
           )}
           <span className="spacer" />
-          {tab.fullAuto ? (
-            <span className="chip" style={{ '--c': 'var(--ok)' } as React.CSSProperties} title="Commands allowed for this tab">
-              ⚡ commands allowed
-            </span>
-          ) : (
-            <span className="chip" style={{ '--c': 'var(--warn)' } as React.CSSProperties} title="Commands restricted for this tab">
-              🛡️ commands restricted
-            </span>
+          {permissionControl}
+        </div>
+      )}
+
+      {!drafting && !(canSend && current) && (
+        <div className="composer-row"><span className="spacer" />{permissionControl}</div>
+      )}
+
+      {quickOptions.length > 0 && canSend && (
+        <div className="quick-options" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px', alignItems: 'center' }}>
+          <span className="muted xs" style={{ fontWeight: 600 }}>Suggested options:</span>
+          {quickOptions.map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              className="sm"
+              style={{ background: 'var(--surface-2)', border: '1px solid var(--accent)', color: 'var(--text)', borderRadius: 'var(--r-sm)' }}
+              onClick={() => {
+                setText(opt);
+              }}
+              title={`Use "${opt}"`}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab.status === 'failed' && (
+        <div
+          className="card warn-row"
+          style={{
+            marginBottom: '8px',
+            padding: '8px 12px',
+            fontSize: 'var(--fs-xs)',
+            background: 'var(--surface-2)',
+            border: '1px solid var(--warn)',
+            borderRadius: 'var(--r-sm)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <span>⚠️ <strong>Worker stopped:</strong> An error occurred or the worker requested input.</span>
+          <span className="grow" />
+          {permission === 'auto' && tab.transcript.some(item => item.text?.includes('Auto review is unavailable')) && (
+            <button type="button" className="sm primary" disabled={busy}
+              onClick={() => void go([...tab.transcript].reverse().find(item => item.kind === 'user')?.text ?? 'Please retry the previous task.', { permissionMode: 'accept-edits' })}
+              title="Retry the task in the permission mode allowed by Claude's policy">
+              Retry in Accept edits
+            </button>
+          )}
+          <button
+            type="button"
+            className="sm"
+            onClick={() => void go([...tab.transcript].reverse().find(item => item.kind === 'user')?.text ?? 'Please retry the previous step or command.', { permissionMode: permission })}
+            disabled={busy}
+            title="Ask the worker to retry"
+          >
+            🔄 Retry
+          </button>
+          {onEscalate && (
+            <button
+              type="button"
+              className="sm quiet"
+              onClick={() => void onEscalate()}
+              disabled={busy}
+              title="Escalate to a stronger seat"
+            >
+              ⬆ Escalate
+            </button>
+          )}
+          {(permissionProvider === 'claude' ? permission !== 'auto' : !tab.fullAuto) && (
+            <button
+              type="button"
+              className="sm"
+              style={{ border: '1px solid var(--warn)' }}
+              onClick={() => void go([...tab.transcript].reverse().find(item => item.kind === 'user')?.text ?? 'Please retry the previous task.', { permissionMode: permissionProvider === 'claude' ? 'auto' : 'full-auto' })}
+              disabled={busy}
+              title={permissionProvider === 'claude' ? 'Let Claude review actions automatically and retry' : 'Allow all commands and retry'}
+            >
+              {permissionProvider === 'claude' ? 'Retry in Auto review' : '⚡ Retry in Full Auto'}
+            </button>
           )}
         </div>
       )}
 
       <div className="composer-box">
+      {showSkillMenu && (
+        <div id={skillMenuId} className="skill-commands" role="listbox" aria-label="Skill commands">
+          {skillMatches.length === 0 && (
+            <div className="skill-command-status" role="status">
+              {skillsLoading ? 'Loading skills…' : skillsError ? `Could not load skills: ${skillsError}`
+                : skills.length ? 'No matching skills.' : 'No skills found for this project.'}
+              {skillsError && <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => setSkillsRefresh(value => value + 1)}>Retry</button>}
+            </div>
+          )}
+          {skillMatches.map((skill, index) => (
+            <button key={skill.name} id={`${skillMenuId}-${index}`} type="button" role="option"
+              aria-selected={index === skillIndex} onMouseDown={event => event.preventDefault()}
+              onClick={() => completeSkill(skill)} title={skill.path}>
+              <strong>/{skill.name}</strong><span className="muted small">{skill.source}</span>
+            </button>
+          ))}
+        </div>
+      )}
         <textarea
+          ref={messageInput}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => { setText(e.target.value); setCursor(e.target.selectionStart); setSkillIndex(0); setSlashDismissed(false); }}
+          onSelect={(e) => setCursor(e.currentTarget.selectionStart)}
+          onBlur={() => setSlashDismissed(true)}
+          onFocus={() => setSlashDismissed(false)}
           onKeyDown={onKey}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={showSkillMenu}
+          aria-controls={showSkillMenu ? skillMenuId : undefined}
+          aria-activedescendant={skillMatches.length ? `${skillMenuId}-${Math.min(skillIndex, skillMatches.length - 1)}` : undefined}
           disabled={!canSend || busy}
           rows={drafting ? 4 : 2}
           placeholder={drafting ? 'Describe the task…' : hint || `Follow-up for ${current ? PROVIDER_NAMES[current.provider] : 'the worker'}…`}
           aria-label="Message"
         />
         <button className="primary" onClick={() => void go()} disabled={!canSend || busy || !text.trim()}>
-          {drafting ? (mode === 'auto' ? 'Ask the council' : `Send to ${PROVIDER_NAMES[mode]}`) : 'Send'}
+          {busy ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <span className="sdot pulse" style={{ width: '6px', height: '6px' }} />
+              Processing…
+            </span>
+          ) : drafting ? (
+            mode === 'auto' ? 'Ask the council' : `Send to ${PROVIDER_NAMES[mode]}`
+          ) : (
+            'Send'
+          )}
         </button>
       </div>
       <div className="composer-hint">
-        <span>{!canSend && hint ? hint : ''}</span>
+        <span>{!canSend && hint ? hint : skills.length ? 'Type / to choose a skill' : ''}</span>
         <span>
           <kbd>Enter</kbd> to send · <kbd>Shift</kbd> <kbd>Enter</kbd> for a new line
         </span>

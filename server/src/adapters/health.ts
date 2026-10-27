@@ -1,17 +1,18 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveCommand, spawnCli } from './spawn.js';
+import { findCommand, resolveCommand, spawnCli } from './spawn.js';
 import { MODEL_LADDERS, type AuthSource, type CliHealth, type Provider } from './types.js';
 
 export interface VersionProbe {
   installed: boolean;
   version?: string;
   error?: string;
+  timedOut?: boolean;
 }
 
 /** Runs `<cmd> --version` and extracts the first version-looking token. */
-export async function probeVersion(cmd: string, args: string[] = ['--version'], timeoutMs = 15_000): Promise<VersionProbe> {
+export async function probeVersion(cmd: string, args: string[] = ['--version'], timeoutMs = 10_000): Promise<VersionProbe> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
@@ -21,6 +22,7 @@ export async function probeVersion(cmd: string, args: string[] = ['--version'], 
     }
     const code = await child.exit;
     const out = `${child.stdout()}\n${child.stderr()}`.trim();
+    if (ac.signal.aborted) return { installed: findCommand(cmd) !== null, timedOut: true, error: `CLI version check timed out after ${timeoutMs} ms; version is unknown` };
     if (code !== 0) return { installed: false, error: out === '' ? `exit code ${code}` : out };
     const match = /v?\d+\.\d+(?:\.\d+)?[\w.-]*/.exec(out);
     return { installed: true, version: match ? match[0] : out.split('\n')[0] };

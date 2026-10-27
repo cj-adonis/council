@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { parseMarkdown, type Span } from '../lib/markdown';
 
 function Spans({ spans }: { spans: Span[] }) {
@@ -27,7 +27,7 @@ function Spans({ spans }: { spans: Span[] }) {
 }
 
 /** Assistant text rendered from the markdown-lite parser; never raw HTML. */
-export function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const blocks = useMemo(() => parseMarkdown(text), [text]);
   return (
     <div className="md">
@@ -80,4 +80,4 @@ export function Markdown({ text }: { text: string }) {
       })}
     </div>
   );
-}
+});

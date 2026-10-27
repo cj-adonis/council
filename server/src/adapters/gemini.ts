@@ -1,6 +1,7 @@
 import type { JsonObject } from './jsonl.js';
 import { runCli, runCliJson } from './run.js';
 import { resolveCommand } from './spawn.js';
+import { runGeminiInteractive } from './interactive.js';
 import { num, ZERO_USAGE, type AdapterEvent, type CliSpec, type RunOptions, type Usage } from './types.js';
 
 /**
@@ -9,7 +10,7 @@ import { num, ZERO_USAGE, type AdapterEvent, type CliSpec, type RunOptions, type
  * summaries return one JSON object.
  */
 export function buildGeminiArgs(o: RunOptions): CliSpec {
-  const args: string[] = ['-o', o.purpose === 'work' ? 'stream-json' : 'json'];
+  const args: string[] = ['-o', o.purpose === 'summarize' ? 'json' : 'stream-json'];
   if (o.model) args.push('-m', o.model);
   if (o.purpose === 'work') {
     args.push('--approval-mode', o.fullAuto ? 'yolo' : 'auto_edit');
@@ -59,7 +60,7 @@ export function createGeminiParser(): (o: JsonObject) => AdapterEvent[] {
       case 'message':
         if (o.role === 'assistant' && typeof o.content === 'string' && o.content !== '') {
           lastText += o.content;
-          return [{ type: 'text', text: o.content }];
+          return [{ type: 'text', text: o.content, delta: o.delta === true }];
         }
         return [];
 
@@ -78,7 +79,7 @@ export function createGeminiParser(): (o: JsonObject) => AdapterEvent[] {
           {
             type: 'tool_result',
             id: typeof o.tool_id === 'string' ? o.tool_id : undefined,
-            output: o.output === undefined || o.output === null ? '' : String(o.output),
+            output: o.output === undefined || o.output === null ? '' : typeof o.output === 'string' ? o.output : JSON.stringify(o.output),
             isError: o.status !== undefined && o.status !== 'success',
           },
         ];
@@ -86,17 +87,27 @@ export function createGeminiParser(): (o: JsonObject) => AdapterEvent[] {
       case 'error':
         return [{ type: 'error', message: typeof o.message === 'string' ? o.message : JSON.stringify(o) }];
 
-      case 'result':
+      case 'result': {
+        const isError = o.status !== 'success';
+        const errObj = o.error && typeof o.error === 'object' ? (o.error as JsonObject) : undefined;
+        const errMessage =
+          errObj && typeof errObj.message === 'string'
+            ? errObj.message
+            : typeof o.message === 'string'
+              ? o.message
+              : undefined;
+        const text = isError ? errMessage ?? (lastText || undefined) : lastText || undefined;
         return [
           {
             type: 'result',
             usage: usageFromGeminiStats(o.stats),
             costUsd: undefined,
             exitCode: 0,
-            isError: o.status !== 'success',
-            text: lastText === '' ? undefined : lastText,
+            isError,
+            text,
           },
         ];
+      }
 
       default:
         return [];
@@ -122,7 +133,8 @@ export function parseGeminiJson(o: JsonObject): AdapterEvent[] {
 }
 
 export function runGemini(opts: RunOptions): AsyncIterable<AdapterEvent> {
+  if (opts.purpose === 'work' && opts.requestInput) return runGeminiInteractive(opts);
   const spec = buildGeminiArgs(opts);
-  const runOpts = { cwd: opts.cwd, env: opts.env, signal: opts.signal };
-  return opts.purpose === 'work' ? runCli(spec, runOpts, createGeminiParser()) : runCliJson(spec, runOpts, parseGeminiJson);
+  const runOpts = { cwd: opts.cwd, env: opts.env, signal: opts.signal, stopAtResult: opts.purpose === 'vote' };
+  return opts.purpose === 'summarize' ? runCliJson(spec, runOpts, parseGeminiJson) : runCli(spec, runOpts, createGeminiParser());
 }

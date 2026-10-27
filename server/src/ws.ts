@@ -6,6 +6,7 @@ import type { TaskEngine } from './tasks/engine.js';
 export type WsMessage =
   | { type: 'hello'; tabs: unknown[]; budgets: unknown }
   | { type: 'tab'; tab: unknown }
+  | { type: 'deleted'; tabId: string }
   | { type: 'item'; tabId: string; item: unknown }
   | { type: 'stall'; tabId: string }
   | { type: 'budgets'; budgets: unknown };
@@ -53,6 +54,7 @@ export function attachWebSocket(server: http.Server, engine: TaskEngine): WebSoc
   });
 
   engine.on('tab', (tab) => broadcast({ type: 'tab', tab }));
+  engine.on('deleted', ({ tabId }: { tabId: string }) => broadcast({ type: 'deleted', tabId }));
   engine.on('item', ({ tabId, item }: { tabId: string; item: unknown }) => broadcast({ type: 'item', tabId, item }));
   engine.on('stall', ({ tabId }: { tabId: string }) => broadcast({ type: 'stall', tabId }));
 

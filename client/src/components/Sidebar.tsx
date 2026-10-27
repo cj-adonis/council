@@ -13,6 +13,8 @@ interface Props {
   tabs: Tab[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onCloseTab: (tab: Tab) => Promise<void>;
+  onDeleteTab: (tab: Tab) => Promise<void>;
   onNewTab: () => void;
   budgets: Record<Provider, BudgetState> | null;
   resetDay: number;
@@ -48,7 +50,7 @@ export function Sidebar(p: Props) {
         </button>
       </div>
 
-      <TabList tabs={p.tabs} selectedId={p.selectedId} onSelect={p.onSelect} now={p.now} emptyText={p.project ? (nothingSetUp ? 'Set up a coding CLI to start.' : 'No tabs yet. Create one and describe a task.') : 'Open a project to start.'} />
+      <TabList tabs={p.tabs} selectedId={p.selectedId} onSelect={p.onSelect} onCloseTab={p.onCloseTab} onDeleteTab={p.onDeleteTab} now={p.now} emptyText={p.project ? (nothingSetUp ? 'Set up a coding CLI to start.' : 'No tabs yet. Create one and describe a task.') : 'Open a project to start.'} />
 
       <BudgetBars budgets={p.budgets} resetDay={p.resetDay} available={p.available} now={p.now} />
 

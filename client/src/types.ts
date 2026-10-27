@@ -2,6 +2,7 @@
 // build does not compile server sources.
 
 export type Provider = 'claude' | 'codex' | 'gemini';
+export type PermissionMode = 'default' | 'plan' | 'accept-edits' | 'auto' | 'full-auto';
 export const PROVIDERS: Provider[] = ['gemini', 'codex', 'claude'];
 export type Tier = 'easy' | 'medium' | 'hard';
 export const TIERS: Tier[] = ['easy', 'medium', 'hard'];
@@ -12,6 +13,30 @@ export interface Usage {
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
+}
+
+export interface InputQuestion {
+  id: string;
+  question: string;
+  options: { label: string; description?: string }[];
+  multiSelect?: boolean;
+  isSecret?: boolean;
+}
+export interface PendingInput {
+  id: string;
+  createdAt: string;
+  kind: 'approval' | 'question';
+  title: string;
+  description?: string;
+  tool?: string;
+  input?: unknown;
+  options?: { id: string; label: string; decision: 'allow' | 'deny' }[];
+  questions?: InputQuestion[];
+}
+export interface InputReply {
+  decision: 'allow' | 'deny' | 'answer';
+  optionId?: string;
+  answers?: Record<string, string[]>;
 }
 
 export interface TranscriptItem {
@@ -45,6 +70,8 @@ export interface SeatResult {
 }
 
 export interface CouncilResult {
+  requiresConfirmation?: boolean;
+  confidenceThreshold?: number;
   seats: SeatResult[];
   selectedSeat: Seat;
   confidence: number;
@@ -56,6 +83,7 @@ export interface CouncilResult {
 }
 
 export interface Tab {
+  pendingInputs?: PendingInput[];
   id: string;
   projectId: string;
   projectRoot: string;
@@ -71,6 +99,9 @@ export interface Tab {
   transcript: TranscriptItem[];
   costUsd: number;
   fullAuto: boolean;
+  permissionMode?: PermissionMode;
+  activePermissionMode?: PermissionMode;
+  workerPermissionModes?: Record<string, PermissionMode>;
   escalations: number;
   stalled: boolean;
   createdAt: string;
@@ -105,15 +136,10 @@ export interface BudgetState {
   };
 }
 
-export interface PlanInfo {
-  name: string;
-  path: string;
-  title: string;
-}
-
 export interface SkillInfo {
   name: string;
   source: string;
+  path?: string;
 }
 
 export interface ModelLimit {
@@ -157,6 +183,7 @@ export interface BrowseResult {
 }
 
 export interface Settings {
+  confidenceThreshold: number;
   budgets: Record<Provider, number>;
   warnPct: number;
   resetDay: number;

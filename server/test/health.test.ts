@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { DEFAULT_KNOWN_MODELS, detectAuth, detectModels, detectPlan, probeVersion } from '../src/adapters/health.js';
+import { DEFAULT_KNOWN_MODELS, detectAuth, detectModelLimits, detectModels, detectPlan, probeVersion } from '../src/adapters/health.js';
 import { checkAll } from '../src/adapters/index.js';
 import type { Adapter, CliHealth, Provider } from '../src/adapters/types.js';
 
@@ -21,6 +21,14 @@ test('checkAll returns one health entry per provider from the registry', async (
   expect(all.claude.version).toBe('2.1.302');
 });
 
+test('one failing health probe does not hide other providers', async () => {
+  const fake = (provider: Provider): Adapter => ({ provider, check: async () => { if (provider === 'codex') throw new Error('broken probe'); return { installed: true, authed: true }; }, run: async function* () {} });
+  const result = await checkAll({ claude: fake('claude'), codex: fake('codex'), gemini: fake('gemini') });
+  expect(result.codex).toMatchObject({ installed: false, error: 'broken probe' });
+  expect(result.claude.installed).toBe(true);
+  expect(result.gemini.installed).toBe(true);
+});
+
 test('probeVersion reports an installed command and its version', async () => {
   const r = await probeVersion(process.execPath, ['--version']);
   expect(r.installed).toBe(true);
@@ -31,6 +39,11 @@ test('probeVersion reports a missing command with an error', async () => {
   const r = await probeVersion('definitely-not-a-cli-xyz-123');
   expect(r.installed).toBe(false);
   expect(r.error).toBeTruthy();
+});
+
+test('a version probe timeout reports the timeout rather than a misleading version as an error', async () => {
+  const r = await probeVersion(process.execPath, ['-e', 'console.log("1.2.3"); setInterval(() => {}, 1000)'], 100);
+  expect(r).toEqual({ installed: true, timedOut: true, error: 'CLI version check timed out after 100 ms; version is unknown' });
 });
 
 test('detectAuth prefers API key environment variables', () => {
@@ -139,4 +152,25 @@ test('detectPlan detects subscription tiers and recommends appropriate budget li
   const geminiApiKeyPlan = detectPlan('gemini', '/fake/home', () => null, { GEMINI_API_KEY: 'test-key' });
   expect(geminiApiKeyPlan.plan).toBe('API Key');
   expect(geminiApiKeyPlan.recommendedBudget).toBe(40);
+});
+
+test('detectModelLimits calculates limits for Gemini, Claude, and Codex models', () => {
+  const geminiLimits = detectModelLimits('gemini', ['gemini-2.5-flash', 'gemini-2.5-pro']);
+  expect(geminiLimits).toEqual([
+    { model: 'gemini-2.5-flash', contextWindow: 1_000_000, maxOutput: 65_536 },
+    { model: 'gemini-2.5-pro', contextWindow: 2_000_000, maxOutput: 65_536 },
+  ]);
+
+  const claudeLimits = detectModelLimits('claude', ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-3-7-sonnet']);
+  expect(claudeLimits).toEqual([
+    { model: 'claude-haiku-5-5', contextWindow: 200_000, maxOutput: 8_192 },
+    { model: 'claude-sonnet-5-5', contextWindow: 200_000, maxOutput: 64_000 },
+    { model: 'claude-3-7-sonnet', contextWindow: 200_000, maxOutput: 64_000 },
+  ]);
+
+  const codexLimits = detectModelLimits('codex', ['gpt-5.1-codex-mini', 'gpt-6.1-sol']);
+  expect(codexLimits).toEqual([
+    { model: 'gpt-5.1-codex-mini', contextWindow: 128_000, maxOutput: 16_384 },
+    { model: 'gpt-6.1-sol', contextWindow: 128_000, maxOutput: 16_384 },
+  ]);
 });

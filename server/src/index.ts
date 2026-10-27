@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { adapters, checkAll } from './adapters/index.js';
-import { MODEL_LADDERS, PROVIDERS, type CliHealth, type Provider } from './adapters/types.js';
+import { createHealthCache } from './adapters/cache.js';
+import { MODEL_LADDERS, PROVIDERS } from './adapters/types.js';
 import { paths } from './config/paths.js';
 import { detectedModels } from './config/detect.js';
 import { SettingsStore } from './config/settings.js';
@@ -11,39 +12,13 @@ import { PricingStore } from './ledger/pricing.js';
 import { TaskEngine } from './tasks/engine.js';
 import { TabStore } from './tasks/store.js';
 
-const HEALTH_TTL_MS = 60_000;
-
-function healthCache() {
-  let last: Record<Provider, CliHealth> | undefined;
-  let fetchedAt = 0;
-  let inflight: Promise<Record<Provider, CliHealth>> | undefined;
-  return {
-    last: () => last,
-    get(): Promise<Record<Provider, CliHealth>> {
-      if (last && Date.now() - fetchedAt < HEALTH_TTL_MS) return Promise.resolve(last);
-      if (!inflight) {
-        inflight = checkAll(adapters)
-          .then((h) => {
-            last = h;
-            fetchedAt = Date.now();
-            return h;
-          })
-          .finally(() => {
-            inflight = undefined;
-          });
-      }
-      return inflight;
-    },
-  };
-}
-
 async function main(): Promise<void> {
   const p = paths();
   await fs.mkdir(p.home, { recursive: true });
   const settings = await SettingsStore.open(p.settings);
   const pricing = await PricingStore.open(p.pricing);
   const store = new TabStore(p.projects);
-  const health = healthCache();
+  const health = createHealthCache(() => checkAll(adapters));
 
   const engine = new TaskEngine({
     adapters,

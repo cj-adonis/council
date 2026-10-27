@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import type { TranscriptItem } from '../types';
-import { groupActivity, runLabel, summarizeRun } from './activity';
+import { groupActivity, isThinking, runLabel, summarizeRun } from './activity';
 
 const t = (id: string, name: string, input: unknown, output?: string, isError?: boolean): TranscriptItem => ({ id, ts: 't', kind: 'tool', tool: { name, input, output, isError } });
 
@@ -35,4 +35,19 @@ test('runLabel reads naturally', () => {
 
 test('an empty transcript has no blocks', () => {
   expect(groupActivity([])).toEqual([]);
+});
+
+test('isThinking indicates worker activity when running unless tool is active', () => {
+  const userItems: TranscriptItem[] = [{ id: 'u', ts: 't', kind: 'user', text: 'hello' }];
+  expect(isThinking(false, userItems)).toBe(false);
+  expect(isThinking(true, userItems)).toBe(true);
+  expect(isThinking(true, [])).toBe(true);
+
+  // When a tool call is actively running, isThinking is false because ActivityRun handles progress
+  const runningToolItems: TranscriptItem[] = [...userItems, t('tool-1', 'Bash', { command: 'ls' })];
+  expect(isThinking(true, runningToolItems)).toBe(false);
+
+  // Once tool finishes, isThinking becomes true while worker processes next step
+  const completedToolItems: TranscriptItem[] = [...userItems, t('tool-1', 'Bash', { command: 'ls' }, 'output')];
+  expect(isThinking(true, completedToolItems)).toBe(true);
 });

@@ -1,4 +1,5 @@
 import type { Adapter, AdapterEvent, Provider, QuotaWindow, ResultEvent } from '../adapters/types.js';
+import { untilAbort } from '../adapters/abort.js';
 import { costFor, type PriceTable } from '../ledger/pricing.js';
 import { buildVotePrompt } from './prompt.js';
 import { selectSeat } from './routing.js';
@@ -21,6 +22,8 @@ export interface SeatResult {
 }
 
 export interface CouncilResult {
+  requiresConfirmation?: boolean;
+  confidenceThreshold?: number;
   seats: SeatResult[];
   selectedSeat: Seat;
   confidence: number;
@@ -46,31 +49,14 @@ export interface CouncilArgs {
   unavailable?: Provider[];
   timeoutMs?: number;
   costCeiling?: number;
+  confidenceThreshold?: number;
   /** Cancels every seat, e.g. because the tab was closed mid-vote. */
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
 }
 
-export const DEFAULT_SEAT_TIMEOUT_MS = 60_000;
+export const DEFAULT_SEAT_TIMEOUT_MS = 180_000;
 export const DEFAULT_VOTE_COST_CEILING = 0.05;
-
-/** Yields from `it` until it ends or `signal` aborts, whichever comes first. */
-async function* untilAbort<T>(it: AsyncIterable<T>, signal: AbortSignal): AsyncGenerator<T> {
-  const iterator = it[Symbol.asyncIterator]();
-  const aborted = new Promise<IteratorResult<T>>((resolve) => {
-    const done = () => resolve({ done: true, value: undefined as never });
-    if (signal.aborted) done();
-    else signal.addEventListener('abort', done, { once: true });
-  });
-  for (;;) {
-    const next = await Promise.race([iterator.next(), aborted]);
-    if (next.done) {
-      if (signal.aborted) void iterator.return?.();
-      return;
-    }
-    yield next.value;
-  }
-}
 
 async function runSeat(seat: Seat, a: CouncilArgs, prompt: string): Promise<SeatResult> {
   const timeoutMs = a.timeoutMs ?? DEFAULT_SEAT_TIMEOUT_MS;
@@ -100,11 +86,13 @@ async function runSeat(seat: Seat, a: CouncilArgs, prompt: string): Promise<Seat
     for await (const ev of untilAbort(events, signal)) {
       if (ev.type === 'text') streamed += ev.text;
       else if (ev.type === 'quota') a.onQuota?.(seat.provider, ev.windows);
-      else if (ev.type === 'error') error = ev.message;
+      else if (ev.type === 'error' && ev.severity !== 'warning') error = ev.message;
       else if (ev.type === 'result') {
+        clearTimeout(timer);
         costUsd = ev.costUsd ?? costFor(seat.provider, seat.model, ev.usage, a.pricing);
         result = { ...ev, costUsd };
         await a.onResult(seat.provider, seat.model, result);
+        break;
       }
     }
     if (ac.signal.aborted) error = `timed out after ${timeoutMs} ms`;
@@ -113,12 +101,13 @@ async function runSeat(seat: Seat, a: CouncilArgs, prompt: string): Promise<Seat
     error = err instanceof Error ? err.message : String(err);
   } finally {
     clearTimeout(timer);
+    ac.abort();
   }
 
   const text = (result?.text ?? streamed).trim();
-  const failed = result?.isError === true;
+  const failed = !result || result.isError || error !== undefined;
   const vote = failed || text === '' ? null : extractVote(text);
-  if (!vote && !error) error = failed ? text || 'seat failed' : 'no vote in output';
+  if (!vote && !error) error = !result ? 'seat exited without a completion event' : failed ? text || 'seat failed' : 'no vote in output';
 
   return {
     seat,
@@ -135,8 +124,11 @@ async function runSeat(seat: Seat, a: CouncilArgs, prompt: string): Promise<Seat
 export async function runCouncil(a: CouncilArgs): Promise<CouncilResult> {
   const prompt = buildVotePrompt(a.task, a.snapshot);
   const seats = await Promise.all(a.seats.map((seat) => runSeat(seat, a, prompt)));
-  const decision = selectSeat(seats, a.pricing, a.budgets, a.unavailable);
+  const confidenceThreshold = a.confidenceThreshold ?? 0.8;
+  const decision = selectSeat(seats, a.pricing, a.budgets, a.unavailable, confidenceThreshold);
   return {
+    confidenceThreshold,
+    requiresConfirmation: decision.requiresConfirmation,
     seats,
     selectedSeat: decision.selectedSeat,
     confidence: decision.confidence,

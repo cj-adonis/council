@@ -110,9 +110,7 @@ export function Settings({ settings, onSaved, health, onError }: Props) {
       // Only the fields this form owns. `recentProjects` is maintained by opening
       // projects, and this copy of it is as old as the page.
       const saved = await api.saveSettings({
-        budgets: s.budgets,
-        warnPct: s.warnPct,
-        resetDay: s.resetDay,
+        confidenceThreshold: s.confidenceThreshold,
         seats: s.seats,
         models: s.models,
         autoStart: s.autoStart,
@@ -142,22 +140,6 @@ export function Settings({ settings, onSaved, health, onError }: Props) {
       setTimeout(() => setDetectMsg(null), 4000);
     } catch (err) {
       onError(`Auto-detect failed: ${(err as Error).message}`);
-    } finally {
-      setDetecting(false);
-    }
-  };
-
-  const handleDetectBudgets = async () => {
-    setDetecting(true);
-    setDetectMsg(null);
-    try {
-      const updated = await api.detectBudgets();
-      setS(updated);
-      onSaved(updated);
-      setDetectMsg('Recommended budgets auto-detected based on subscription plans!');
-      setTimeout(() => setDetectMsg(null), 4000);
-    } catch (err) {
-      onError(`Auto-detect budgets failed: ${(err as Error).message}`);
     } finally {
       setDetecting(false);
     }
@@ -276,7 +258,7 @@ export function Settings({ settings, onSaved, health, onError }: Props) {
         <section className="card">
           <header className="card-title">Council seats</header>
           <p className="muted small">
-            Seats analyze task complexity and self-score confidence. The lowest-cost confident seat (≥80%) executes the task. Between 1 and 5 seats can be configured.
+            Seats analyze task complexity and self-score confidence. The lowest-cost seat meeting the confidence threshold executes the task. Between 1 and 5 seats can be configured.
           </p>
           {s.seats.map((seat, i) => (
             <SeatRow
@@ -299,12 +281,27 @@ export function Settings({ settings, onSaved, health, onError }: Props) {
           )}
           <div className="grid3" style={{ marginTop: '12px' }}>
             <label>
+              Confidence threshold (%)
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={Math.round(s.confidenceThreshold * 100)}
+                onChange={(e) => setS({ ...s, confidenceThreshold: Math.min(100, Math.max(0, num(e.target.value, 80))) / 100 })}
+                aria-describedby="confidence-threshold-help"
+              />
+              <span id="confidence-threshold-help" className="muted small">
+                Minimum confidence for lowest-cost routing. Fall back to the strongest seat with a valid vote. If all votes fail, choose a worker manually.
+              </span>
+            </label>
+            <label>
               Seat timeout (seconds)
               <input
                 type="number"
                 min={5}
                 value={s.seatTimeoutMs / 1000}
-                onChange={(e) => setS({ ...s, seatTimeoutMs: num(e.target.value, 60) * 1000 })}
+                onChange={(e) => setS({ ...s, seatTimeoutMs: num(e.target.value, 180) * 1000 })}
               />
             </label>
             <label>
@@ -396,58 +393,6 @@ export function Settings({ settings, onSaved, health, onError }: Props) {
               );
             })}
           </div>
-          <section className="card" style={{ marginTop: '16px' }}>
-            <header className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Monthly Budgets (USD)</span>
-              <button
-                type="button"
-                className="sm primary"
-                onClick={() => void handleDetectBudgets()}
-                disabled={detecting}
-                title="Auto-detect recommended budgets from subscription tiers"
-              >
-                {detecting ? 'Detecting…' : '↻ Auto-Detect Budgets'}
-              </button>
-            </header>
-            <p className="muted small">
-              Optional monthly spending caps. Set to 0 to disable tracking for that provider.
-            </p>
-            <div className="grid3" style={{ marginTop: '8px' }}>
-              {PROVIDERS.map((p) => (
-                <label key={p}>
-                  {PROVIDER_NAMES[p]} ($)
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={s.budgets[p]}
-                    onChange={(e) => setS({ ...s, budgets: { ...s.budgets, [p]: num(e.target.value, 0) } })}
-                  />
-                </label>
-              ))}
-              <label>
-                Warn at (fraction)
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={s.warnPct}
-                  onChange={(e) => setS({ ...s, warnPct: num(e.target.value, 0.8) })}
-                />
-              </label>
-              <label>
-                Reset day of month
-                <input
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={s.resetDay}
-                  onChange={(e) => setS({ ...s, resetDay: num(e.target.value, 1) })}
-                />
-              </label>
-            </div>
-          </section>
         </section>
       )}
 

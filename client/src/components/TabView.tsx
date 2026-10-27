@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { useNow } from '../hooks/useNow';
 import { useStickToBottom } from '../hooks/useStickToBottom';
@@ -6,7 +6,7 @@ import { costSource, formatUsd, PROVIDER_NAMES } from '../lib/format';
 import { isStreaming, statusPhrase, tabChips, toneOf } from '../lib/lanes';
 import { firstSetUp, noneSetUp, type Availability } from '../lib/routing';
 import { shouldAskAboutStall, stallMessage } from '../lib/stall';
-import type { Provider, Settings, SubmitMode, Tab } from '../types';
+import type { PermissionMode, Provider, Settings, SubmitMode, Tab } from '../types';
 import { Composer } from './Composer';
 import { Details } from './Details';
 import { Glyph } from './Glyph';
@@ -14,6 +14,7 @@ import { Steps } from './Home';
 import { ProviderSelect } from './ProviderSelect';
 import { Transcript } from './Transcript';
 import { VoteCard } from './VoteCard';
+import { PendingInputs } from './PendingInputs';
 
 interface Props {
   tab: Tab;
@@ -24,20 +25,28 @@ interface Props {
   details: boolean;
   onToggleDetails: () => void;
   onError: (message: string) => void;
+  onDelete: (tab: Tab) => Promise<void>;
   onTabUpdate?: (tab: Tab) => void;
 }
 
-export function TabView({ tab, settings, available, stallSeq, details, onToggleDetails, onError, onTabUpdate }: Props) {
+export function TabView({ tab, settings, available, stallSeq, details, onToggleDetails, onError, onDelete, onTabUpdate }: Props) {
   const [switching, setSwitching] = useState(false);
   const [switchProvider, setSwitchProvider] = useState<Provider>(() => firstSetUp(available, 'claude'));
   const [switchModel, setSwitchModel] = useState('');
   const [closing, setClosing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [dismissedStall, setDismissedStall] = useState<number | null>(null);
   const now = useNow(5_000);
   const streamRef = useRef<HTMLDivElement>(null);
-  const last = tab.transcript[tab.transcript.length - 1];
-  const { pinned, jump } = useStickToBottom(streamRef, `${tab.transcript.length}:${last?.text?.length ?? 0}:${last?.tool?.output?.length ?? 0}`);
+  const streamSignal = useMemo(() => {
+    let size = 0;
+    for (const it of tab.transcript) {
+      size += (it.text?.length ?? 0) + (it.tool?.output?.length ?? 0);
+    }
+    return `${tab.transcript.length}:${size}:${tab.status}`;
+  }, [tab.transcript, tab.status]);
+  const { pinned, jump } = useStickToBottom(streamRef, streamSignal);
 
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true);
@@ -54,7 +63,20 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
   };
 
   const settled = tab.status === 'idle' || tab.status === 'failed';
+  const stop = async () => {
+    setStopping(true);
+    try {
+      const stopped = await api.stop(tab.id);
+      onTabUpdate?.(stopped);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setStopping(false);
+    }
+  };
   const canEscalate = settled && tab.worker !== null;
+  const isBusyStatus = tab.status === 'running' || tab.status === 'voting' || tab.status === 'handing-off';
+  const canClear = tab.status !== 'closed';
   const askingAboutStall = shouldAskAboutStall(tab, stallSeq, dismissedStall);
   const chips = tabChips(tab);
   const drafting = tab.status === 'drafting' && tab.transcript.length === 0;
@@ -93,29 +115,40 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
             </div>
           </div>
           <div className="tab-actions">
+            {isBusyStatus && (
+              <button className="danger" disabled={stopping} onClick={() => void stop()}
+                aria-label="Stop AI" title="Stop the current work and keep this tab open so you can send another message">
+                {stopping ? 'Stopping…' : 'Stop'}
+              </button>
+            )}
             {canEscalate && (
               <button className="quiet" disabled={busy} onClick={() => void act(() => api.escalate(tab.id))} title="Hand the task to a stronger model with a summary">
                 Escalate
               </button>
             )}
+            {canClear && (
+              <button
+                className="quiet"
+                disabled={busy || isBusyStatus}
+                onClick={() => void act(() => api.clearContext(tab.id))}
+                title="Clear session context and start fresh on the next message without prior history"
+              >
+                🧹 Clear context
+              </button>
+            )}
             {settled && (
-              <>
-                <button
-                  className="quiet"
-                  disabled={busy}
-                  onClick={() => void act(() => api.clearContext(tab.id))}
-                  title="Clear session context and start fresh on the next message without prior history"
-                >
-                  🧹 Clear context
-                </button>
-                <button className="quiet" disabled={busy} onClick={() => setSwitching((s) => !s)} aria-expanded={switching}>
-                  Switch worker
-                </button>
-              </>
+              <button className="quiet" disabled={busy} onClick={() => setSwitching((s) => !s)} aria-expanded={switching}>
+                Switch worker
+              </button>
             )}
             {tab.status !== 'closed' && (
               <button disabled={busy} className="quiet danger" onClick={() => setClosing((c) => !c)} aria-expanded={closing}>
                 Close
+              </button>
+            )}
+            {tab.status === 'closed' && (
+              <button disabled={busy} className="quiet danger" onClick={() => void act(() => onDelete(tab))}>
+                Delete
               </button>
             )}
             <button className={`iconbtn${details ? ' selected' : ''}`} onClick={onToggleDetails} title={`${details ? 'Hide' : 'Show'} details (Alt+I)`} aria-label="Toggle details" aria-pressed={details}>
@@ -125,10 +158,19 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
         </header>
 
         <div className="alerts">
+          <PendingInputs requests={tab.pendingInputs ?? []} onReply={(requestId, reply) => act(() => api.answerInput(tab.id, requestId, reply))} />
           {switching && settled && (
             <div className="card inline-form">
               <span>Hand this tab to</span>
-              <ProviderSelect value={switchProvider} onChange={setSwitchProvider} available={available} ariaLabel="Switch provider" />
+              <ProviderSelect
+                value={switchProvider}
+                onChange={(p) => {
+                  setSwitchProvider(p);
+                  setSwitchModel('');
+                }}
+                available={available}
+                ariaLabel="Switch provider"
+              />
               <select value={switchModel} onChange={(e) => setSwitchModel(e.target.value)} aria-label="Switch model">
                 <option value="">default model</option>
                 {settings.models[switchProvider]?.map((m) => (
@@ -182,11 +224,9 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
           {askingAboutStall && (
             <div className="card warn inline-form" role="status">
               <span>{stallMessage(settings.stallMinutes)}. The worker may be stuck.</span>
-              {tab.worker !== null && (
-                <button disabled={busy} className="primary" onClick={() => void act(() => api.escalate(tab.id))} title="Stop this worker and hand the task to a stronger model">
-                  Escalate
-                </button>
-              )}
+              <button disabled={stopping} className="primary" onClick={() => void stop()}>
+                {stopping ? 'Stopping…' : 'Stop and send another message'}
+              </button>
               <button disabled={busy} onClick={() => setDismissedStall(stallSeq)}>
                 Keep waiting
               </button>
@@ -226,7 +266,14 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
           )}
         </div>
 
-        {nothingSetUp && tab.status !== 'closed' ? (
+        {tab.status === 'closed' ? (
+          <div className="card closed-banner" style={{ padding: '16px', textAlign: 'center', background: 'var(--surface-2)', border: '1px solid var(--border)', margin: '16px 0' }}>
+            <p className="muted" style={{ marginBottom: '8px' }}>This tab is closed. The workspace changes remain in your checkout.</p>
+            <button className="danger sm" onClick={() => void onDelete(tab)}>
+              Delete tab permanently
+            </button>
+          </div>
+        ) : nothingSetUp ? (
           <div className="setup" role="status">
             <h3>No coding CLI is set up</h3>
             <p className="sec sm">Council drives Claude Code, Codex CLI and Gemini CLI. Install one, sign in, and this tab can take a task. The details are under Settings › CLI health.</p>
@@ -236,9 +283,11 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
             tab={tab}
             settings={settings}
             available={available}
-            onSubmit={(text: string, mode: SubmitMode, fullAuto: boolean) => act(() => api.submit(tab.id, text, mode, fullAuto))}
-            onSend={(text: string) => act(() => api.send(tab.id, text))}
+            onSubmit={(text: string, mode: SubmitMode, permissionMode: PermissionMode) => act(() => api.submit(tab.id, text, mode, permissionMode))}
+            onSend={(text: string, opts?: { fullAuto?: boolean; permissionMode?: PermissionMode }) => act(() => api.send(tab.id, text, opts))}
+            onPermissionMode={(permissionMode) => act(() => api.setPermissionMode(tab.id, permissionMode))}
             onSwitch={(provider: Provider, model: string | null) => act(() => api.switchWorker(tab.id, provider, model))}
+            onEscalate={() => act(() => api.escalate(tab.id))}
           />
         )}
       </div>

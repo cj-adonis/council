@@ -3,6 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import type { WebSocketServer } from 'ws';
 import { PROVIDERS, type CliHealth, type Provider } from './adapters/types.js';
+import { permissionMode } from './adapters/permissions.js';
 import { detectedBudgets, detectedModels } from './config/detect.js';
 import type { SettingsStore } from './config/settings.js';
 import type { PricingStore, PriceTable } from './ledger/pricing.js';
@@ -143,11 +144,37 @@ export function createServer(deps: ServerDeps): CouncilServer {
       return { status: 200, body: { plans, skills } };
     }
 
+    if (resource === 'skills' && method === 'GET') {
+      const projectId = url.searchParams.get('projectId');
+      const root = projectId
+        ? deps.settings.get().recentProjects.find((r) => engine.projectIdFor(r) === projectId) ?? process.cwd()
+        : process.cwd();
+      return { status: 200, body: { skills: await findSkills(root) } };
+    }
+
     if (resource === 'routing' && method === 'GET') {
       return { status: 200, body: engine.routing(url.searchParams.get('projectId') ?? undefined) };
     }
 
     if (resource === 'projects') {
+      if (id && /^[0-9a-f]{12}$/.test(id) && method === 'GET' && !action) {
+        const root = deps.settings.get().recentProjects.find((candidate) => engine.projectIdFor(candidate) === id);
+        if (!root) throw new HttpError(404, `unknown project ${id}`);
+        const [stat, git] = await Promise.all([
+          fs.stat(root).catch(() => null),
+          fs.stat(path.join(root, '.git')).catch(() => null),
+        ]);
+        if (!stat?.isDirectory() || !git) throw new HttpError(404, 'project checkout no longer exists');
+        // Recent projects were already validated when opened. Restoring one should
+        // not run Git commands just to display its saved tabs.
+        const tabs = await engine.loadProject(root);
+        return { status: 200, body: { projectId: id, root, defaultBranch: null, tabs } };
+      }
+      if (id && /^[0-9a-f]{12}$/.test(id) && action === 'branch' && method === 'GET') {
+        const root = deps.settings.get().recentProjects.find((candidate) => engine.projectIdFor(candidate) === id);
+        if (!root) throw new HttpError(404, `unknown project ${id}`);
+        return { status: 200, body: { defaultBranch: await defaultBranch(root).catch(() => null) } };
+      }
       if (id === 'discover' && method === 'GET') {
         const found = await discoverProjects();
         return { status: 200, body: { currentCwd: process.cwd(), projects: found } };
@@ -199,6 +226,11 @@ export function createServer(deps: ServerDeps): CouncilServer {
         const tab = engine.getTab(id);
         if (!tab) throw new HttpError(404, `unknown tab ${id}`);
         if (!action && method === 'GET') return { status: 200, body: tab };
+        if (!action && method === 'DELETE') {
+          if (tab.status !== 'closed') throw new HttpError(409, 'close the tab before deleting it');
+          await engine.delete(id);
+          return { status: 200, body: { id } };
+        }
         if (method === 'POST') {
           switch (action) {
             case 'submit':
@@ -206,6 +238,7 @@ export function createServer(deps: ServerDeps): CouncilServer {
                 status: 200,
                 body: await engine.submit(id, str(body.text, 'text'), submitMode(body.mode), {
                   fullAuto: typeof body.fullAuto === 'boolean' ? body.fullAuto : undefined,
+                  permissionMode: body.permissionMode === undefined ? undefined : permissionMode(body.permissionMode),
                 }),
               };
             case 'start':
@@ -214,7 +247,21 @@ export function createServer(deps: ServerDeps): CouncilServer {
                 body: await engine.start(id, body.provider ? { provider: provider(body.provider), model: modelOf(body.model) } : undefined),
               };
             case 'send':
-              return { status: 200, body: await engine.send(id, str(body.text, 'text')) };
+              return {
+                status: 200,
+                body: await engine.send(id, str(body.text, 'text'), {
+                  fullAuto: typeof body.fullAuto === 'boolean' ? body.fullAuto : undefined,
+                  permissionMode: body.permissionMode === undefined ? undefined : permissionMode(body.permissionMode),
+                }),
+              };
+            case 'permissions':
+              return { status: 200, body: await engine.setPermissionMode(id, permissionMode(body.permissionMode)) };
+            case 'input': {
+              const requestId = str(body.requestId, 'requestId');
+              if (!tab.pendingInputs?.some((p) => p.id === requestId)) throw new HttpError(409, 'This input request is no longer pending');
+              if (!['allow', 'deny', 'answer'].includes(String(body.decision))) throw new HttpError(400, 'Invalid input decision');
+              return { status: 200, body: await engine.answerInput(id, requestId, { decision: body.decision as 'allow' | 'deny' | 'answer', optionId: typeof body.optionId === 'string' ? body.optionId : undefined, answers: body.answers as Record<string, string[]> | undefined }) };
+            }
             case 'clear-context':
               return { status: 200, body: await engine.clearContext(id) };
             case 'escalate':
@@ -223,6 +270,8 @@ export function createServer(deps: ServerDeps): CouncilServer {
               return { status: 200, body: await engine.switchWorker(id, provider(body.provider), modelOf(body.model)) };
             case 'close':
               return { status: 200, body: await engine.close(id) };
+            case 'stop':
+              return { status: 200, body: await engine.stop(id) };
             default:
               break;
           }
