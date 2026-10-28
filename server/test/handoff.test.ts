@@ -24,7 +24,7 @@ test('the hand-off prompt carries task, summary, diff stat, previous worker and 
   expect(p).toMatch(/escalat/i);
   expect(p).toContain('<task>');
   expect(p).toContain('</task>');
-  expect(p).toMatch(/same (project|checkout|working copy)/i);
+  expect(p).toMatch(/same workspace/i);
   expect(p).toMatch(/do not commit/i);
   expect(p).toMatch(/CLAUDE\.md|AGENTS\.md|GEMINI\.md/);
 });

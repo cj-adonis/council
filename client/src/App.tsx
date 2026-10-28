@@ -20,11 +20,12 @@ import {
 } from './lib/nav';
 import { noneSetUp } from './lib/routing';
 import { shortcutAction } from './lib/shortcuts';
-import type { BudgetState, CliHealth, EffectiveRouting, ProjectInfo, Provider, Settings as SettingsT, Tab, TranscriptItem } from './types';
+import type { BudgetState, CliHealth, EffectiveRouting, PermissionMode, ProjectInfo, Provider, Settings as SettingsT, SubmitMode, Tab, TranscriptItem } from './types';
 import { useNow } from './hooks/useNow';
 import { useSocket } from './useSocket';
 
 const DETAILS_KEY = 'council.details';
+const OPEN_PROJECTS_KEY = 'council.openProjects';
 /** How often health and the effective routing are re-read, so a CLI signed in while the page is open gets noticed. */
 const HEALTH_REFRESH_MS = 60_000;
 
@@ -57,9 +58,11 @@ export function App() {
   const [health, setHealth] = useState<Record<Provider, CliHealth> | null>(null);
   const [healthChecking, setHealthChecking] = useState(true);
   const [routing, setRouting] = useState<EffectiveRouting | null>(null);
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [project, setProject] = useState<ProjectInfo | null>(null);
+  const [openProjects, setOpenProjects] = useState<ProjectInfo[]>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [composing, setComposing] = useState(false);
   const [view, setView] = useState<'tabs' | 'settings'>(() => (readHash(location.hash).settings ? 'settings' : 'tabs'));
   /** A tab id from the URL hash or local storage, honoured once that tab is known. */
   const [wantedTab, setWantedTab] = useState<string | null>(() => readWantedTab(location.hash, getStorage()));
@@ -114,18 +117,13 @@ export function App() {
   const openProject = useCallback(async (path: string, restoreId?: string) => {
     const info = restoreId ? await api.restoreProject(restoreId) : await api.openProject(path);
     setProject({ root: info.root, projectId: info.projectId, defaultBranch: info.defaultBranch });
+    setOpenProjects((prev) => prev.some((p) => p.projectId === info.projectId) ? prev : [...prev, { root: info.root, projectId: info.projectId, defaultBranch: info.defaultBranch }]);
     setTabs((prev) => ({ ...prev, ...Object.fromEntries(info.tabs.map((t) => [t.id, t])) }));
-    setProjects((prev) => [
-      { root: info.root, projectId: info.projectId, defaultBranch: info.defaultBranch },
-      ...prev.filter((p) => p.projectId !== info.projectId),
-    ]);
     writeStorage(getStorage(), LAST_PROJECT_KEY, info.root);
-    if (restoreId) {
-      void api.projectBranch(restoreId).then(({ defaultBranch }) => {
-        setProject((prev) => prev?.projectId === restoreId ? { ...prev, defaultBranch } : prev);
-        setProjects((prev) => prev.map((p) => p.projectId === restoreId ? { ...p, defaultBranch } : p));
-      }).catch(() => {});
-    }
+    void api.projectBranch(info.projectId).then(({ defaultBranch }) => {
+      setProject((prev) => prev?.projectId === info.projectId ? { ...prev, defaultBranch } : prev);
+      setOpenProjects((prev) => prev.map((p) => p.projectId === info.projectId ? { ...p, defaultBranch } : p));
+    }).catch(() => {});
     // The selection is never cleared here: a tab from another project simply stops being shown (see `selected`),
     // so a deep link that opens its own project keeps its tab even when the initial project load finishes later.
   }, []);
@@ -136,14 +134,29 @@ export function App() {
     api
       .projects()
       .then(async (list) => {
-        setProjects(list);
         const lastRoot = readStorage(getStorage(), LAST_PROJECT_KEY);
         const target = pickInitialProject(list, lastRoot);
-        if (target) await openProject(target.root, target.projectId);
+        const saved = readStorage(getStorage(), OPEN_PROJECTS_KEY);
+        let ids: string[] | null = null;
+        if (saved !== null) {
+          try {
+            const parsed: unknown = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.every((id) => typeof id === 'string')) ids = parsed;
+          } catch { /* use the previous single-workspace preference */ }
+        }
+        if (ids) {
+          const restored = list.filter((p) => ids.includes(p.projectId) && p.projectId !== target?.projectId);
+          for (const p of restored) await openProject(p.root, p.projectId).catch(() => {});
+          if (target && ids.includes(target.projectId)) await openProject(target.root, target.projectId).catch(() => {});
+        } else if (target) await openProject(target.root, target.projectId);
       })
       .catch((e: Error) => onError(e.message))
       .finally(() => setInitializing(false));
   }, [onError, openProject]);
+
+  useEffect(() => {
+    if (!initializing) writeStorage(getStorage(), OPEN_PROJECTS_KEY, JSON.stringify(openProjects.map((p) => p.projectId)));
+  }, [initializing, openProjects]);
 
   const refreshHealth = useCallback(async (fresh = true) => {
     setHealthChecking(true);
@@ -234,22 +247,31 @@ export function App() {
 
   const select = useCallback((id: string | null) => {
     if (id) {
+      setComposing(false);
+      const target = tabs[id];
+      const workspace = openProjects.find((p) => p.projectId === target?.projectId);
+      if (workspace) {
+        setProject(workspace);
+        writeStorage(getStorage(), LAST_PROJECT_KEY, workspace.root);
+      }
       setSelectedId(id);
       writeStorage(getStorage(), LAST_TAB_KEY, id);
     }
     setView('tabs');
-  }, []);
+  }, [tabs, openProjects]);
 
   const newTab = useCallback(async () => {
     if (!project || noneSetUp(available)) return;
-    try {
-      const tab = await api.createTab(project.root, '');
-      setTabs((prev) => ({ ...prev, [tab.id]: tab }));
-      select(tab.id);
-    } catch (err) {
-      onError((err as Error).message);
-    }
-  }, [project, available, select, onError]);
+    setComposing(true);
+    setSelectedId(null);
+    setView('tabs');
+  }, [project, available]);
+
+  const newSession: Tab | null = composing && project ? {
+    id: 'new-session', projectId: project.projectId, projectRoot: project.root, title: '', status: 'drafting',
+    worker: null, previousWorkers: [], vote: null, routing: null, transcript: [], costUsd: 0,
+    fullAuto: false, escalations: 0, stalled: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  } : null;
 
   const closeTab = useCallback(async (tab: Tab) => {
     setTabAction({ tab, action: 'close' });
@@ -267,8 +289,9 @@ export function App() {
         await api.deleteTab(tab.id);
         forgetTab(tab.id);
       } else {
-        const closed = await api.close(tab.id);
-        setTabs((prev) => ({ ...prev, [closed.id]: closed }));
+        await api.close(tab.id);
+        await api.deleteTab(tab.id);
+        forgetTab(tab.id);
       }
     } catch (err) {
       onError((err as Error).message);
@@ -340,6 +363,7 @@ export function App() {
   const openFromUi = async (p: string) => {
     try {
       await openProject(p);
+      setComposing(false);
       setView('tabs');
     } catch (err) {
       onError((err as Error).message);
@@ -347,16 +371,37 @@ export function App() {
   };
 
   return (
-    <div className="app">
-      <Sidebar
-        projects={projects}
+    <div className={`app${sidebarOpen ? '' : ' sidebar-collapsed'}`}>
+      {sidebarOpen ? <Sidebar
         project={project}
+        openProjects={openProjects}
+        onSelectProject={(workspace) => {
+          setComposing(false);
+          setProject(workspace);
+          setSelectedId(null);
+          setView('tabs');
+          writeStorage(getStorage(), LAST_PROJECT_KEY, workspace.root);
+          writeStorage(getStorage(), LAST_TAB_KEY, null);
+        }}
+        onCloseProject={(id) => {
+          const remaining = openProjects.filter((p) => p.projectId !== id);
+          setOpenProjects(remaining);
+          if (project?.projectId === id) {
+            setComposing(false);
+            const next = remaining[0] ?? null;
+            setProject(next);
+            setSelectedId(null);
+            setWantedTab(null);
+            writeStorage(getStorage(), LAST_PROJECT_KEY, next?.root ?? null);
+            writeStorage(getStorage(), LAST_TAB_KEY, null);
+          }
+        }}
+        onCollapse={() => setSidebarOpen(false)}
         onOpenProject={openFromUi}
-        tabs={projectTabs}
+        tabs={Object.values(tabs).filter((t) => openProjects.some((p) => p.projectId === t.projectId))}
         selectedId={selectedId}
         onSelect={select}
         onCloseTab={closeTab}
-        onDeleteTab={deleteTab}
         onNewTab={() => void newTab()}
         budgets={budgets}
         resetDay={settings?.resetDay ?? 1}
@@ -366,7 +411,13 @@ export function App() {
         onHelp={() => setHelp(true)}
         connected={connected}
         now={now}
-      />
+      /> : <aside className="sidebar-rail" aria-label="Collapsed sidebar">
+        <button className="iconbtn sidebar-expand" onClick={() => setSidebarOpen(true)} aria-label="Expand sidebar" title="Expand sidebar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M13 9l3 3-3 3" />
+          </svg>
+        </button>
+      </aside>}
       <div className="content">
         {!connected && (
           <div className="banner tone-warn" role="status">
@@ -389,6 +440,20 @@ export function App() {
           </main>
         ) : view === 'settings' && settings ? (
           <Settings settings={settings} onSaved={setSettings} health={health} checking={healthChecking} onRefresh={refreshHealth} onError={onError} />
+        ) : newSession && settings ? (
+          <TabView key={`new-${newSession.projectId}`} tab={newSession} settings={settings} available={available} stallSeq={0} details={details} onToggleDetails={toggleDetails} onError={onError} onDelete={deleteTab} onClose={closeTab} onCancelCreate={() => setComposing(false)}
+            onCreate={async (text: string, mode: SubmitMode, permission: PermissionMode) => {
+              try {
+                const created = await api.createTab(newSession.projectRoot, '');
+                const submitted = await api.submit(created.id, text, mode, permission);
+                setTabs((prev) => ({ ...prev, [submitted.id]: submitted }));
+                setComposing(false);
+                select(submitted.id);
+              } catch (err) {
+                onError((err as Error).message);
+                throw err;
+              }
+            }} />
         ) : selected && settings ? (
           <TabView
             key={selected.id}
@@ -400,10 +465,11 @@ export function App() {
             onToggleDetails={toggleDetails}
             onError={onError}
             onDelete={deleteTab}
+            onClose={closeTab}
             onTabUpdate={(updated) => setTabs((prev) => ({ ...prev, [updated.id]: updated }))}
           />
         ) : (
-          <Home projects={projects} project={project} openTabs={openTabs.length} available={available} notes={routing?.notes ?? []} health={health} checking={healthChecking} onRefresh={checkProviders} onOpenProject={openFromUi} onNewTab={() => void newTab()} onSettings={() => setView('settings')} />
+          <Home project={project} openTabs={openTabs.length} available={available} notes={routing?.notes ?? []} health={health} checking={healthChecking} onRefresh={checkProviders} onOpenProject={openFromUi} onNewTab={() => void newTab()} onSettings={() => setView('settings')} confidenceThreshold={settings?.confidenceThreshold} />
         )}
       </div>
       {help && <ShortcutHelp onClose={() => setHelp(false)} />}

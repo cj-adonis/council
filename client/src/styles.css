@@ -497,6 +497,16 @@ kbd {
   height: 100vh;
   overflow: hidden;
 }
+.app.sidebar-collapsed { grid-template-columns: 48px minmax(0, 1fr); }
+.sidebar-rail {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 10px;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+}
+.sidebar-expand { display: grid; place-items: center; }
 .app > * {
   min-width: 0;
 }
@@ -563,6 +573,17 @@ kbd {
   flex-direction: column;
   gap: 2px;
 }
+.workspace-list { flex: 1; min-height: 80px; overflow-y: auto; padding: 8px 10px; }
+.workspace-group { margin-bottom: 8px; }
+.workspace-picker { margin: 8px 10px 2px; }
+.workspace-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.workspace-heading { display: flex; align-items: center; gap: 2px; border-radius: var(--r-md); }
+.workspace-heading.active { background: var(--surface); }
+.workspace-heading button { border-color: transparent; }
+.workspace-toggle, .workspace-close { flex: none; padding: 5px 7px; color: var(--text-3); }
+.workspace-name { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; padding: 6px 4px; }
+.workspace-group .lanes { min-height: 0; overflow: visible; padding: 0 0 4px 12px; }
+.workspace-list > .empty-note { padding: 10px 4px; color: var(--text-3); }
 .project .name {
   display: flex;
   gap: 6px;
@@ -637,14 +658,15 @@ kbd {
 }
 .tab-entry {
   position: relative;
+  margin-bottom: 4px;
 }
 .tab-entry .trow {
   padding-right: 36px;
 }
 button.tab-row-action {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 9px;
+  right: 8px;
   width: 24px;
   height: 24px;
   padding: 0;
@@ -663,11 +685,11 @@ button.tab-row-action:focus-visible {
 .trow {
   width: 100%;
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
+  grid-template-columns: 10px minmax(0, 1fr);
   grid-template-rows: auto auto;
-  gap: 2px 8px;
+  gap: 5px 10px;
   text-align: left;
-  padding: 7px 8px;
+  padding: 10px 10px;
   border-radius: var(--r-md);
   border: 1px solid transparent;
   background: transparent;
@@ -696,6 +718,9 @@ button.tab-row-action:focus-visible {
 .trow .sdot {
   grid-row: 1 / span 2;
   align-self: center;
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c, var(--text-3)) 18%, transparent);
 }
 .trow .title {
   font-weight: 600;
@@ -723,7 +748,8 @@ button.tab-row-action:focus-visible {
   text-overflow: ellipsis;
 }
 .trow .meta > .phrase {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .trow .right {
   grid-column: 3;
@@ -733,6 +759,7 @@ button.tab-row-action:focus-visible {
   color: var(--text-3);
   display: flex;
   gap: 4px;
+  align-items: center;
 }
 .closedbar {
   margin: 0 10px;
@@ -835,11 +862,12 @@ button.tab-row-action:focus-visible {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 48px;
 }
 .tabview.with-details {
   grid-template-columns: minmax(0, 1fr) var(--details-w);
 }
+.details-rail { display: flex; justify-content: center; align-items: flex-start; padding-top: 10px; background: var(--sidebar-bg); border-left: 1px solid var(--border); }
 .tab-main {
   display: flex;
   flex-direction: column;
@@ -1472,6 +1500,9 @@ button.tab-row-action:focus-visible {
   flex-direction: column;
   gap: 6px;
 }
+.details-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.details-heading strong { font-size: var(--fs-sm); }
+.details-heading button { font-size: 20px; line-height: 1; }
 .details h5 {
   font-size: var(--fs-xs);
   font-weight: 600;
@@ -2022,6 +2053,9 @@ table.plain input[type='number'] {
   }
 }
 @media (max-width: 800px) {
+  .tabview:not(.with-details) { grid-template-columns: minmax(0, 1fr) 40px; }
+}
+@media (max-width: 800px) {
   .app {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
@@ -2034,6 +2068,8 @@ table.plain input[type='number'] {
     border-bottom: 1px solid var(--border);
     max-height: 50vh;
   }
+  .app.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .sidebar-rail { justify-content: flex-start; padding: 4px 10px; border-right: 0; border-bottom: 1px solid var(--border); }
   .tier-word {
     display: none;
   }

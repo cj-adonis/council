@@ -117,6 +117,8 @@ export function FolderBrowser({ initialDir, onSelect, onClose }: Props) {
 
         {error && <span className="chip" style={{ '--c': 'var(--danger)' } as React.CSSProperties}>{error}</span>}
 
+        {data && <button type="button" className="primary sm" onClick={() => { onSelect(data.current); onClose(); }}>Open this folder</button>}
+
         {/* Current directory Git status banner */}
         {data?.isGitRepo && (
           <div
@@ -137,17 +139,6 @@ export function FolderBrowser({ initialDir, onSelect, onClose }: Props) {
                 </span>
               )}
             </div>
-            <span className="grow" />
-            <button
-              type="button"
-              className="primary sm"
-              onClick={() => {
-                onSelect(data.current);
-                onClose();
-              }}
-            >
-              Open this repository
-            </button>
           </div>
         )}
 

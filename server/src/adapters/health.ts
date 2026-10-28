@@ -23,7 +23,7 @@ export async function probeVersion(cmd: string, args: string[] = ['--version'], 
     const code = await child.exit;
     const out = `${child.stdout()}\n${child.stderr()}`.trim();
     if (ac.signal.aborted) return { installed: findCommand(cmd) !== null, timedOut: true, error: `CLI version check timed out after ${timeoutMs} ms; version is unknown` };
-    if (code !== 0) return { installed: false, error: out === '' ? `exit code ${code}` : out };
+    if (code !== 0) return { installed: findCommand(cmd) !== null, error: out === '' ? `exit code ${code}` : out };
     const match = /v?\d+\.\d+(?:\.\d+)?[\w.-]*/.exec(out);
     return { installed: true, version: match ? match[0] : out.split('\n')[0] };
   } finally {

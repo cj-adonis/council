@@ -1,10 +1,9 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { api } from '../api';
 import { followUpSelection, selectionChangesWorker } from '../lib/composerMode';
 import { tabPermission } from '../lib/permissions';
 import { PermissionSelect } from './PermissionSelect';
 import { PROVIDER_NAMES } from '../lib/format';
-import { extractOptions } from '../lib/options';
 import { expandSkillCommand, skillCommandAt, skillInstruction } from '../lib/skills';
 import { autoLabel, isSetUp, notSetUpTitle, type Availability } from '../lib/routing';
 import { PROVIDERS, type PermissionMode, type Provider, type Settings, type SkillInfo, type SubmitMode, type Tab } from '../types';
@@ -19,6 +18,7 @@ interface Props {
   /** A change of worker from the follow-up selector; behaves like the header's Switch worker. */
   onSwitch: (provider: Provider, model: string | null) => Promise<void>;
   onPermissionMode: (mode: PermissionMode) => Promise<void>;
+  onDraftPermissionChange?: (mode: PermissionMode) => void;
   onEscalate?: () => Promise<void>;
 }
 
@@ -39,7 +39,7 @@ function hintFor(tab: Tab): string {
   }
 }
 
-export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch, onPermissionMode, onEscalate }: Props) {
+export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch, onPermissionMode, onDraftPermissionChange, onEscalate }: Props) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState<'auto' | Provider>('auto');
   const [model, setModel] = useState('');
@@ -49,6 +49,8 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch,
   const [skillsError, setSkillsError] = useState('');
   const [skillsRefresh, setSkillsRefresh] = useState(0);
   const messageInput = useRef<HTMLTextAreaElement>(null);
+  const historyIndex = useRef<number | null>(null);
+  const historyDraft = useRef('');
   const [inputHeight, setInputHeight] = useState(96);
   const resizeStart = useRef<{ y: number; height: number } | null>(null);
   const maxInputHeight = Math.max(96, Math.min(600, Math.floor(window.innerHeight * 0.55)));
@@ -74,14 +76,9 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch,
     : skills.filter(skill => skill.name.toLowerCase().includes(slashCommand!.query.toLowerCase()));
   const [followModel, setFollowModel] = useState(current?.model ?? '');
 
-  const lastItem = useMemo(() => {
-    return [...tab.transcript].reverse().find((it) => it.kind === 'assistant' || (it.kind === 'tool' && it.tool));
-  }, [tab.transcript]);
-
-  const quickOptions = useMemo(() => {
-    if (!lastItem || tab.status === 'closed' || tab.status === 'running' || tab.status === 'voting') return [];
-    return extractOptions(lastItem.text, lastItem.tool?.input);
-  }, [lastItem, tab.status]);
+  useEffect(() => {
+    if (drafting) onDraftPermissionChange?.(permission);
+  }, [drafting, permission, onDraftPermissionChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,6 +126,9 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch,
         await onSend(t, opts);
       }
       setText('');
+      historyIndex.current = null;
+    } catch {
+      // The caller reports the error; retain the message so it can be retried.
     } finally {
       setBusy(false);
     }
@@ -151,6 +151,22 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch,
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
         completeSkill(skillMatches[skillIndex] ?? skillMatches[0]!);
+        return;
+      }
+    }
+    if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      const input = e.currentTarget;
+      const atEdge = e.key === 'ArrowUp' ? !text.slice(0, input.selectionStart).includes('\n') : !text.slice(input.selectionEnd).includes('\n');
+      const history = tab.transcript.flatMap(item => item.kind === 'user' && item.text?.trim() ? [item.text] : []);
+      if (input.selectionStart === input.selectionEnd && atEdge && history.length && (e.key === 'ArrowUp' || historyIndex.current !== null)) {
+        e.preventDefault();
+        if (historyIndex.current === null) historyDraft.current = text;
+        const index = Math.max(0, Math.min(history.length, (historyIndex.current ?? history.length) + (e.key === 'ArrowUp' ? -1 : 1)));
+        historyIndex.current = index === history.length ? null : index;
+        const next = historyIndex.current === null ? historyDraft.current : history[index]!;
+        setText(next);
+        setCursor(next.length);
+        requestAnimationFrame(() => messageInput.current?.setSelectionRange(next.length, next.length));
         return;
       }
     }
@@ -348,26 +364,6 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch,
 
       {!drafting && !(canSend && current) && (
         <div className="composer-row"><span className="spacer" />{permissionControl}</div>
-      )}
-
-      {quickOptions.length > 0 && canSend && (
-        <div className="quick-options" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px', alignItems: 'center' }}>
-          <span className="muted xs" style={{ fontWeight: 600 }}>Suggested options:</span>
-          {quickOptions.map((opt) => (
-            <button
-              key={opt}
-              type="button"
-              className="sm"
-              style={{ background: 'var(--surface-2)', border: '1px solid var(--accent)', color: 'var(--text)', borderRadius: 'var(--r-sm)' }}
-              onClick={() => {
-                setText(opt);
-              }}
-              title={`Use "${opt}"`}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
       )}
 
       {tab.status === 'failed' && (

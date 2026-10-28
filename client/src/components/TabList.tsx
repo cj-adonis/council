@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { costSource, formatUsd, relativeTime } from '../lib/format';
-import { closedTabs, groupTabs, isStreaming, laneOf, statusPhrase, tabChips, toneOf } from '../lib/lanes';
+import { groupTabs, isStreaming, laneOf, statusPhrase, toneOf } from '../lib/lanes';
 import type { Tab } from '../types';
 import { Glyph } from './Glyph';
 
@@ -9,7 +8,6 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCloseTab: (tab: Tab) => Promise<void>;
-  onDeleteTab: (tab: Tab) => Promise<void>;
   now: Date;
   /** Shown when there are no open tabs. */
   emptyText: string;
@@ -17,30 +15,16 @@ interface Props {
 
 function TabRow({ tab, selected, onSelect, onAction, busy, now }: { tab: Tab; selected: boolean; onSelect: () => void; onAction: () => void; busy: boolean; now: Date }) {
   const lane = laneOf(tab);
-  const chip = tabChips(tab)[0];
   const attention = lane === 'needs-you';
   const action = tab.status === 'closed' ? 'Delete' : 'Close';
   return (
     <div className="tab-entry">
       <button className={`trow${selected ? ' selected' : ''}${attention ? ' attn' : ''}`} onClick={onSelect} aria-current={selected ? 'true' : undefined} title={tab.title || 'Untitled task'}>
-        <span className={`sdot tone-${toneOf(tab)}${isStreaming(tab) ? ' pulse' : ''}`} aria-label={statusPhrase(tab, now)} />
+        <span className={`sdot tone-${toneOf(tab)}${isStreaming(tab) ? ' pulse' : ''}`} role="img" aria-label={statusPhrase(tab, now)} title={statusPhrase(tab, now)} />
         <span className="title">{tab.title || 'Untitled task'}</span>
-        <span className="cost" title={`${formatUsd(tab.costUsd)} spent on this tab, ${costSource(tab.worker?.provider)}`}>
-          {formatUsd(tab.costUsd)}
-        </span>
         <span className="meta">
           {tab.worker && <Glyph provider={tab.worker.provider} />}
-          <span className="phrase">{statusPhrase(tab, now)}</span>
-          {tab.worker?.model && <span title={tab.worker.model}>· {tab.worker.model}</span>}
-        </span>
-        <span className="right">
-          {chip ? (
-            <span className={`chip tone-${chip.tone}`} title={chip.title}>
-              {chip.label}
-            </span>
-          ) : (
-            <span title={new Date(tab.updatedAt).toLocaleString()}>{relativeTime(tab.updatedAt, now)}</span>
-          )}
+          {tab.worker && <span title={tab.worker.model ?? 'Default model'}>{tab.worker.model ?? 'Default model'}</span>}
         </span>
       </button>
       <button className="tab-row-action quiet" type="button" onClick={onAction} disabled={busy} aria-label={`${action} ${tab.title || 'Untitled task'}`} title={`${action} tab`}>
@@ -54,18 +38,15 @@ function TabRow({ tab, selected, onSelect, onAction, busy, now }: { tab: Tab; se
   );
 }
 
-/** The sidebar's tab list: grouped by lane, with closed tabs behind a collapsed bar. */
-export function TabList({ tabs, selectedId, onSelect, onCloseTab, onDeleteTab, now, emptyText }: Props) {
-  const [showClosed, setShowClosed] = useState(false);
+/** The sidebar's open sessions, ordered by attention. */
+export function TabList({ tabs, selectedId, onSelect, onCloseTab, now, emptyText }: Props) {
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const groups = groupTabs(tabs);
-  const closed = closedTabs(tabs);
+  const groups = groupTabs(tabs.filter((t) => t.status !== 'drafting' || t.transcript.some((item) => item.kind === 'user')));
   const act = async (tab: Tab) => {
     if (pendingId) return;
     setPendingId(tab.id);
     try {
-      if (tab.status === 'closed') await onDeleteTab(tab);
-      else await onCloseTab(tab);
+      await onCloseTab(tab);
     } finally {
       setPendingId(null);
     }
@@ -74,35 +55,10 @@ export function TabList({ tabs, selectedId, onSelect, onCloseTab, onDeleteTab, n
     <>
       <nav className="lanes" aria-label="Tabs">
         {groups.length === 0 && <div className="empty-note">{emptyText}</div>}
-        {groups.map((g) => (
-          <section key={g.lane} aria-label={g.label}>
-            <header className="lane-h section-label">
-              <span>{g.label}</span>
-              <span className="count">{g.tabs.length}</span>
-            </header>
-            {g.tabs.map((t) => (
-              <TabRow key={t.id} tab={t} selected={t.id === selectedId} onSelect={() => onSelect(t.id)} onAction={() => void act(t)} busy={pendingId === t.id} now={now} />
-            ))}
-          </section>
+        {groups.flatMap((g) => g.tabs).map((t) => (
+          <TabRow key={t.id} tab={t} selected={t.id === selectedId} onSelect={() => onSelect(t.id)} onAction={() => void act(t)} busy={pendingId === t.id} now={now} />
         ))}
       </nav>
-      {closed.length > 0 && (
-        <>
-          <div className="closedbar">
-            <span>Closed · {closed.length}</span>
-            <button className="link xs" onClick={() => setShowClosed((s) => !s)} aria-expanded={showClosed}>
-              {showClosed ? 'hide' : 'show'}
-            </button>
-          </div>
-          {showClosed && (
-            <div className="closed-list">
-              {closed.map((t) => (
-                <TabRow key={t.id} tab={t} selected={t.id === selectedId} onSelect={() => onSelect(t.id)} onAction={() => void act(t)} busy={pendingId === t.id} now={now} />
-              ))}
-            </div>
-          )}
-        </>
-      )}
     </>
   );
 }

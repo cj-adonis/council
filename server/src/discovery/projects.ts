@@ -24,14 +24,24 @@ export async function pickNativeFolder(initialDir?: string): Promise<NativePick>
     const initPath = initialDir ? initialDir.replace(/'/g, "''") : '';
     const script = `
 Add-Type -AssemblyName System.Windows.Forms
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $d = New-Object System.Windows.Forms.FolderBrowserDialog
-$d.Description = 'Select Git Checkout Folder'
-$d.AutoUpgradeEnabled = $true
+$d.Description = 'Select Workspace Folder'
 $d.ShowNewFolderButton = $false
 ${initPath ? `$d.SelectedPath = '${initPath}'` : ''}
-if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-  Write-Output $d.SelectedPath
-}
+$owner = New-Object System.Windows.Forms.Form
+$owner.ShowInTaskbar = $false
+$owner.StartPosition = 'CenterScreen'
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$owner.Opacity = 0
+$owner.TopMost = $true
+try {
+  $owner.Show()
+  $owner.Activate()
+  if ($d.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+    Write-Output $d.SelectedPath
+  }
+} finally { $d.Dispose(); $owner.Dispose() }
 `.trim();
     try {
       const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-STA', '-Command', script], {
@@ -46,7 +56,7 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 
   if (process.platform === 'darwin') {
     try {
-      const prompt = 'Select Git repository folder';
+      const prompt = 'Select workspace folder';
       const script = `POSIX path of (choose folder with prompt "${prompt}")`;
       const { stdout } = await execFileAsync('osascript', ['-e', script], { timeout: 120_000 });
       return { path: stdout.trim() || null, available: true };
@@ -59,7 +69,7 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 
   if (process.platform === 'linux') {
     try {
-      const { stdout } = await execFileAsync('zenity', ['--file-selection', '--directory', '--title=Select Git Repository'], {
+      const { stdout } = await execFileAsync('zenity', ['--file-selection', '--directory', '--title=Select Workspace Folder'], {
         timeout: 120_000,
       });
       return { path: stdout.trim() || null, available: true };

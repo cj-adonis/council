@@ -141,6 +141,30 @@ test('live Full auto updates the same run, releases approvals, and keeps questio
   await engine.close(tab.id);
 });
 
+test('Gemini question server session approval enables live Full auto without answering questions', async () => {
+  const { engine, adapters } = makeEngine({ autoEscalate: false });
+  const apply = vi.fn(async (_mode: PermissionMode) => {});
+  adapters.gemini.run = async function* (opts) {
+    await opts.registerPermissionMode!(apply);
+    await opts.requestInput!({ kind: 'approval', title: 'Allow Gemini to ask you questions', options: [
+      { id: 'once', label: 'Allow once', decision: 'allow' },
+      { id: 'server', label: 'Allow all server tools for this session', decision: 'allow' },
+    ] });
+    await opts.requestInput!({ kind: 'question', title: 'Choose', questions: [{ id: 'q', question: 'Which?', options: [] }] });
+    yield* workEvents('session');
+  };
+  const tab = await engine.createTab('C:/proj', 'approval');
+  await engine.submit(tab.id, 'start', { kind: 'manual', provider: 'gemini', model: null }, { permissionMode: 'default' });
+  await vi.waitFor(() => expect(tab.pendingInputs).toHaveLength(1));
+  await engine.answerInput(tab.id, tab.pendingInputs![0]!.id, { decision: 'allow', optionId: 'server' });
+  expect(apply).toHaveBeenCalledWith('full-auto');
+  expect(tab.permissionMode).toBe('full-auto');
+  expect(tab.activePermissionMode).toBe('full-auto');
+  await vi.waitFor(() => expect(tab.pendingInputs?.[0]?.kind).toBe('question'));
+  await engine.answerInput(tab.id, tab.pendingInputs![0]!.id, { decision: 'answer', answers: { q: ['A'] } });
+  await vi.waitFor(() => expect(tab.status).toBe('idle'));
+});
+
 test('worker and model choices are remembered without spreading full auto to another model', async () => {
   const { engine } = makeEngine();
   const tab = await engine.createTab('C:/proj', 'models');

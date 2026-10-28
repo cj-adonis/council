@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { basename, costSource, formatUsd, PROVIDER_NAMES, shortenPath } from '../lib/format';
 import { filesTouched } from '../lib/tools';
-import type { Tab, TabWorker } from '../types';
+import type { PermissionMode, Tab, TabWorker } from '../types';
 import { Glyph } from './Glyph';
 import { tally } from './VoteCard';
 import { PERMISSION_LABELS, tabPermission } from '../lib/permissions';
@@ -16,12 +16,18 @@ function Worker({ w }: { w: TabWorker }) {
 }
 
 /** The right-hand pane: worker, routing, the checkout being edited, cost and the files the transcript touched. */
-export function Details({ tab }: { tab: Tab }) {
+export function Details({ tab, onCollapse, draftPermission }: { tab: Tab; onCollapse: () => void; draftPermission?: PermissionMode }) {
   const files = useMemo(() => filesTouched(tab.transcript), [tab.transcript]);
   const voteCost = tab.vote ? tab.vote.seats.reduce((s, x) => s + x.costUsd, 0) : 0;
+  const mode = draftPermission ?? tabPermission(tab, tab.worker?.provider);
+  const active = tab.status === 'running' ? tab.activePermissionMode : undefined;
 
   return (
-    <aside className="details" aria-label="Tab details">
+    <aside id="session-details" className="details" aria-label="Session details">
+      <div className="details-heading">
+        <strong>Session details</strong>
+        <button type="button" className="quiet sm" onClick={onCollapse} aria-label="Collapse session details" title="Collapse session details">›</button>
+      </div>
       <section>
         <h5>Worker</h5>
         <div className="kv">
@@ -36,7 +42,7 @@ export function Details({ tab }: { tab: Tab }) {
             </>
           )}
           <span className="k">Mode</span>
-          <span className="v">{PERMISSION_LABELS[tabPermission(tab, tab.worker?.provider)]}</span>
+          <span className="v">{PERMISSION_LABELS[active ?? mode]}{active && active !== mode && <span className="muted xs"> · {PERMISSION_LABELS[mode]} next turn</span>}</span>
         </div>
       </section>
 
@@ -90,7 +96,7 @@ export function Details({ tab }: { tab: Tab }) {
       </section>
 
       <section>
-        <h5>Checkout</h5>
+        <h5>Workspace</h5>
         <div className="kv">
           <span className="k">Project</span>
           <span className="v">{basename(tab.projectRoot)}</span>
@@ -99,7 +105,7 @@ export function Details({ tab }: { tab: Tab }) {
             {tab.projectRoot}
           </span>
         </div>
-        <span className="muted xs">The worker edits this checkout in place and commits nothing. Review the changes in your editor or with git.</span>
+        <span className="muted xs">The worker makes changes in this folder. Review its work in your workspace.</span>
       </section>
 
       <section>

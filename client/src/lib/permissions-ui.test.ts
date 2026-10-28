@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { act, createElement } from 'react';
+import { act, createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { PermissionSelect } from '../components/PermissionSelect';
 import { Composer } from '../components/Composer';
+import { Details } from '../components/Details';
 import { permissionOptions, tabPermission } from './permissions';
-import type { Settings, Tab } from '../types';
+import type { PermissionMode, Settings, Tab } from '../types';
 vi.mock('../api', () => ({ api: { skills: async () => ({ skills: [] }), saveSettings: vi.fn() } }));
 let host: HTMLDivElement;
 let root: Root;
@@ -42,6 +43,23 @@ test('mode options keep native auto review separate and omit it for Gemini and a
   expect(permissionOptions(null)).not.toContain('auto');
   expect(tabPermission({ fullAuto: false })).toBe('accept-edits');
   expect(tabPermission({ fullAuto: true, permissionMode: 'plan' })).toBe('plan');
+});
+
+test('details follow an unsent session’s selected mode and distinguish queued changes', async () => {
+  const tab = { status: 'drafting', projectId: 'project', projectRoot: 'C:/project', fullAuto: false, transcript: [], worker: null, previousWorkers: [], vote: null, costUsd: 0 } as unknown as Tab;
+  const settings = { models: { claude: [], codex: [], gemini: [] }, allowedCommands: [] } as unknown as Settings;
+  function View() {
+    const [mode, setMode] = useState<PermissionMode>();
+    return createElement('div', null,
+      createElement(Composer, { tab, settings, available: ['gemini'], onSubmit: vi.fn(), onSend: vi.fn(), onSwitch: vi.fn(), onPermissionMode: vi.fn(), onDraftPermissionChange: setMode }),
+      createElement(Details, { tab, draftPermission: mode, onCollapse: vi.fn() }));
+  }
+  await act(async () => root.render(createElement(View)));
+  await select('Permission mode', 'plan');
+  expect(host.querySelector('.details')?.textContent).toContain('Plan');
+  const running = { ...tab, status: 'running', worker: { provider: 'gemini', model: null, sessionId: null }, permissionMode: 'plan', activePermissionMode: 'accept-edits' } as Tab;
+  await act(async () => root.render(createElement(Details, { tab: running, onCollapse: vi.fn() })));
+  expect(host.textContent).toContain('Accept edits · Plan next turn');
 });
 
 test('a mode choice sends exactly the chosen mode; render does not change permissions', async () => {

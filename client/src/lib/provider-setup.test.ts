@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { Health } from '../components/Health';
-import { Home } from '../components/Home';
+import { Home, Steps } from '../components/Home';
 import type { CliHealth, Provider } from '../types';
 
 vi.mock('../api', () => ({ api: { discoverProjects: async () => ({ currentCwd: '', projects: [] }) } }));
@@ -26,6 +26,13 @@ afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   vi.restoreAllMocks();
+});
+
+test('routing explanation displays the configured confidence threshold', async () => {
+  await act(async () => root.render(createElement(Steps, { confidenceThreshold: 0.65 })));
+  expect(host.textContent).toContain('≥65%');
+  await act(async () => root.render(createElement(Steps, { confidenceThreshold: 0.9 })));
+  expect(host.textContent).toContain('≥90%');
 });
 
 test('provider cards explain installation, login, suggested models and nonblocking version warnings', async () => {

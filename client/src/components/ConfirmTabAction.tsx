@@ -21,9 +21,7 @@ export function ConfirmTabAction({ title, action, running, onCancel, onConfirm }
       <h3 id="confirm-tab-title">{deleting ? 'Delete tab?' : running ? 'Stop worker and close tab?' : 'Close tab?'}</h3>
       <p className="confirm-tab-name">{title || 'Untitled task'}</p>
       <p id="confirm-tab-description" className="muted">
-        {deleting ? 'This permanently removes the tab and its saved transcript. Changes in the checkout will stay.'
-          : running ? 'The running worker will stop. Changes in the checkout will stay, and the saved tab will be available under Closed.'
-          : 'The saved tab will still be available under Closed.'}
+        {running && !deleting ? 'The running worker will stop. ' : ''}This permanently removes the session and its saved transcript. Changes in the workspace will stay.
       </p>
       <div className="confirm-tab-actions">
         <button type="button" className="quiet" autoFocus disabled={busy} onClick={onCancel}>Cancel</button>

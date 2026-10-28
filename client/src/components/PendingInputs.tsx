@@ -81,7 +81,7 @@ function InputCard({
                   disabled={busy}
                   onClick={() => void reply({ decision: 'allow', optionId: option.id })}
                 >
-                  {option.label}
+                  {option.label}{request.title === 'Allow Gemini to ask you questions' && option.label.trim().toLowerCase() === 'allow all server tools for this session' ? ' · Enable Full auto' : ''}
                 </button>
               ))}
             <button

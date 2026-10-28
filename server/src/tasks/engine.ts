@@ -232,6 +232,9 @@ export class TaskEngine extends EventEmitter {
         if (!Array.isArray(values) || values.length === 0 || values.length > 20 || values.some((v) => typeof v !== 'string' || !v.trim() || v.length > 8_000) || (!question.multiSelect && values.length !== 1)) throw new Error(`Answer required: ${question.question}`);
       }
     }
+    const enableGeminiFullAuto = tab.worker?.provider === 'gemini' && pending.request.kind === 'approval' &&
+      pending.request.title === 'Allow Gemini to ask you questions' && reply.decision === 'allow' &&
+      pending.request.options?.some((option) => option.id === reply.optionId && option.label.trim().toLowerCase() === 'allow all server tools for this session');
     // Consume before resuming the CLI, so concurrent/double submissions cannot approve twice.
     if (reply.decision === 'deny') pending.run.inputDeclined = true;
     for (const question of pending.request.questions ?? []) {
@@ -243,6 +246,13 @@ export class TaskEngine extends EventEmitter {
       this.addItem(tab, 'user', `Answers to worker questions:\n${redactSecrets(text, pending.run.secretAnswers)}`);
     } else {
       this.addItem(tab, 'system', pending.request.kind === 'question' ? 'Question dismissed.' : (reply.decision === 'allow' ? `Approved ${pending.request.title}: ${pending.request.options?.find((o) => o.id === reply.optionId)?.label ?? 'Allow'}.` : `Denied ${pending.request.title}.`));
+    }
+    if (enableGeminiFullAuto) {
+      try {
+        await this.setPermissionMode(tab.id, 'full-auto');
+      } catch (error) {
+        this.addItem(tab, 'system', `Could not enable Full auto: ${error instanceof Error ? error.message : String(error)}. The tool approval was still granted.`);
+      }
     }
     await this.touch(tab);
     return tab;
@@ -718,7 +728,7 @@ export class TaskEngine extends EventEmitter {
       const events = this.deps.adapters[worker.provider].run({
         cwd: tab.projectRoot,
         prompt: [
-          `Work in the existing checkout at ${tab.projectRoot}. Follow its repository instructions and requested skills.`,
+          `Work in the workspace at ${tab.projectRoot}. Follow its instructions and requested skills.`,
           'Leave changes uncommitted unless the task explicitly requests a commit. Verify your work with the relevant checks and report what actually passed.',
           'Use native file paths from the workspace and file tools. Do not translate Windows paths into /tmp or /c paths for file tools.',
           ...(permission === 'plan' ? ['You are in Plan mode. Inspect and propose a plan without changing project files or executing the plan. Ask the user to switch modes before implementation.'] : []),

@@ -26,15 +26,18 @@ interface Props {
   onToggleDetails: () => void;
   onError: (message: string) => void;
   onDelete: (tab: Tab) => Promise<void>;
+  onClose?: (tab: Tab) => Promise<void>;
   onTabUpdate?: (tab: Tab) => void;
+  onCreate?: (text: string, mode: SubmitMode, permissionMode: PermissionMode) => Promise<void>;
+  onCancelCreate?: () => void;
 }
 
-export function TabView({ tab, settings, available, stallSeq, details, onToggleDetails, onError, onDelete, onTabUpdate }: Props) {
+export function TabView({ tab, settings, available, stallSeq, details, onToggleDetails, onError, onDelete, onClose, onTabUpdate, onCreate, onCancelCreate }: Props) {
   const [switching, setSwitching] = useState(false);
   const [switchProvider, setSwitchProvider] = useState<Provider>(() => firstSetUp(available, 'claude'));
   const [switchModel, setSwitchModel] = useState('');
-  const [closing, setClosing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [draftPermission, setDraftPermission] = useState<PermissionMode | undefined>();
   const [stopping, setStopping] = useState(false);
   const [dismissedStall, setDismissedStall] = useState<number | null>(null);
   const now = useNow(5_000);
@@ -76,7 +79,7 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
   };
   const canEscalate = settled && tab.worker !== null;
   const isBusyStatus = tab.status === 'running' || tab.status === 'voting' || tab.status === 'handing-off';
-  const canClear = tab.status !== 'closed';
+  const canClear = tab.status !== 'closed' && !onCreate;
   const askingAboutStall = shouldAskAboutStall(tab, stallSeq, dismissedStall);
   const chips = tabChips(tab);
   const drafting = tab.status === 'drafting' && tab.transcript.length === 0;
@@ -141,8 +144,8 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
                 Switch worker
               </button>
             )}
-            {tab.status !== 'closed' && (
-              <button disabled={busy} className="quiet danger" onClick={() => setClosing((c) => !c)} aria-expanded={closing}>
+            {onCreate ? <button className="quiet" onClick={onCancelCreate}>Cancel</button> : tab.status !== 'closed' && (
+              <button disabled={busy} className="quiet danger" onClick={() => void onClose?.(tab)}>
                 Close
               </button>
             )}
@@ -151,9 +154,6 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
                 Delete
               </button>
             )}
-            <button className={`iconbtn${details ? ' selected' : ''}`} onClick={onToggleDetails} title={`${details ? 'Hide' : 'Show'} details (Alt+I)`} aria-label="Toggle details" aria-pressed={details}>
-              ▥
-            </button>
           </div>
         </header>
 
@@ -195,31 +195,11 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
                 Cancel
               </button>
               <span className="muted sm">
-                {tab.worker?.provider === switchProvider ? 'Same provider: the session continues with the new model.' : 'A summary of the work so far is handed to the new worker; it carries on in the same checkout.'}
+                {tab.worker?.provider === switchProvider ? 'Same provider: the session continues with the new model.' : 'A summary of the work so far is handed to the new worker; it carries on in the same workspace.'}
               </span>
             </div>
           )}
 
-          {closing && (
-            <div className="card danger inline-form">
-              <span>Close this tab? A running worker is stopped. Changes already made to your checkout stay as they are.</span>
-              <button
-                className="danger primary"
-                disabled={busy}
-                onClick={() =>
-                  void act(async () => {
-                    await api.close(tab.id);
-                    setClosing(false);
-                  })
-                }
-              >
-                Close tab
-              </button>
-              <button className="quiet" onClick={() => setClosing(false)}>
-                Cancel
-              </button>
-            </div>
-          )}
 
           {askingAboutStall && (
             <div className="card warn inline-form" role="status">
@@ -239,9 +219,9 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
             <div className="draft-intro">
               <h3>What should the council work on?</h3>
               <p className="sec">
-                Describe the task below. Auto lets the council rate it and route it; or pick a provider to skip the vote. The worker edits this checkout directly and follows its CLAUDE.md, AGENTS.md or GEMINI.md.
+                Describe the task below. Auto lets the council rate it and route it; or pick a provider to skip the vote. The worker works in this folder and follows its CLAUDE.md, AGENTS.md or GEMINI.md if present.
               </p>
-              <Steps />
+              <Steps confidenceThreshold={settings.confidenceThreshold} />
             </div>
           )}
 
@@ -268,7 +248,7 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
 
         {tab.status === 'closed' ? (
           <div className="card closed-banner" style={{ padding: '16px', textAlign: 'center', background: 'var(--surface-2)', border: '1px solid var(--border)', margin: '16px 0' }}>
-            <p className="muted" style={{ marginBottom: '8px' }}>This tab is closed. The workspace changes remain in your checkout.</p>
+            <p className="muted" style={{ marginBottom: '8px' }}>This tab is closed. The changes remain in your workspace.</p>
             <button className="danger sm" onClick={() => void onDelete(tab)}>
               Delete tab permanently
             </button>
@@ -283,16 +263,23 @@ export function TabView({ tab, settings, available, stallSeq, details, onToggleD
             tab={tab}
             settings={settings}
             available={available}
-            onSubmit={(text: string, mode: SubmitMode, permissionMode: PermissionMode) => act(() => api.submit(tab.id, text, mode, permissionMode))}
+            onSubmit={(text: string, mode: SubmitMode, permissionMode: PermissionMode) => onCreate ? onCreate(text, mode, permissionMode) : act(() => api.submit(tab.id, text, mode, permissionMode))}
             onSend={(text: string, opts?: { fullAuto?: boolean; permissionMode?: PermissionMode }) => act(() => api.send(tab.id, text, opts))}
             onPermissionMode={(permissionMode) => act(() => api.setPermissionMode(tab.id, permissionMode))}
+            onDraftPermissionChange={setDraftPermission}
             onSwitch={(provider: Provider, model: string | null) => act(() => api.switchWorker(tab.id, provider, model))}
             onEscalate={() => act(() => api.escalate(tab.id))}
           />
         )}
       </div>
 
-      {details && <Details tab={tab} />}
+      {details ? <Details tab={tab} onCollapse={onToggleDetails} draftPermission={drafting ? draftPermission : undefined} /> : <aside className="details-rail" aria-label="Collapsed session details">
+        <button className="iconbtn" onClick={onToggleDetails} aria-label="Expand session details" title="Expand session details (Alt+I)" aria-expanded={false} aria-controls="session-details">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16M11 9l-3 3 3 3" />
+          </svg>
+        </button>
+      </aside>}
     </main>
   );
 }

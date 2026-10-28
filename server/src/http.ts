@@ -9,7 +9,7 @@ import type { SettingsStore } from './config/settings.js';
 import type { PricingStore, PriceTable } from './ledger/pricing.js';
 import { isAllowedHost, isAllowedOrigin } from './origin.js';
 import type { SubmitMode, TaskEngine } from './tasks/engine.js';
-import { defaultBranch, runGit } from './worktrees/git.js';
+import { defaultBranch } from './worktrees/git.js';
 import { attachWebSocket } from './ws.js';
 import { findPlans, findSkills } from './discovery/plans.js';
 import { browseDirectory, discoverProjects, pickNativeFolder } from './discovery/projects.js';
@@ -161,11 +161,8 @@ export function createServer(deps: ServerDeps): CouncilServer {
       if (id && /^[0-9a-f]{12}$/.test(id) && method === 'GET' && !action) {
         const root = deps.settings.get().recentProjects.find((candidate) => engine.projectIdFor(candidate) === id);
         if (!root) throw new HttpError(404, `unknown project ${id}`);
-        const [stat, git] = await Promise.all([
-          fs.stat(root).catch(() => null),
-          fs.stat(path.join(root, '.git')).catch(() => null),
-        ]);
-        if (!stat?.isDirectory() || !git) throw new HttpError(404, 'project checkout no longer exists');
+        const stat = await fs.stat(root).catch(() => null);
+        if (!stat?.isDirectory()) throw new HttpError(404, 'workspace folder no longer exists');
         // Recent projects were already validated when opened. Restoring one should
         // not run Git commands just to display its saved tabs.
         const tabs = await engine.loadProject(root);
@@ -198,18 +195,10 @@ export function createServer(deps: ServerDeps): CouncilServer {
         const requested = str(body.path, 'path');
         const stat = await fs.stat(requested).catch(() => null);
         if (!stat?.isDirectory()) throw new HttpError(400, 'path does not exist or is not a directory');
-        const top = await runGit(requested, ['rev-parse', '--show-toplevel']);
-        if (top.code !== 0) throw new HttpError(400, 'path is not inside a git repository');
-        const root = path.resolve(top.stdout.trim());
+        const root = path.resolve(requested);
         await deps.settings.addRecentProject(root);
         const tabs = await engine.loadProject(root);
-        let branch: string | null = null;
-        try {
-          branch = await defaultBranch(root);
-        } catch {
-          /* reported as null */
-        }
-        return { status: 200, body: { projectId: engine.projectIdFor(root), root, defaultBranch: branch, tabs } };
+        return { status: 200, body: { projectId: engine.projectIdFor(root), root, defaultBranch: null, tabs } };
       }
     }
 

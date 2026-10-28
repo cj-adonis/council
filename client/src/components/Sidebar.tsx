@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { laneCounts } from '../lib/lanes';
+import { basename } from '../lib/format';
 import { noneSetUp, type Availability } from '../lib/routing';
 import type { BudgetState, ProjectInfo, Provider, Tab } from '../types';
 import { BudgetBars } from './BudgetBars';
@@ -7,14 +9,16 @@ import { TabList } from './TabList';
 import { ThemeToggle } from './ThemeToggle';
 
 interface Props {
-  projects: ProjectInfo[];
   project: ProjectInfo | null;
+  openProjects: ProjectInfo[];
+  onSelectProject: (project: ProjectInfo) => void;
+  onCloseProject: (id: string) => void;
+  onCollapse: () => void;
   onOpenProject: (path: string) => Promise<void>;
   tabs: Tab[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCloseTab: (tab: Tab) => Promise<void>;
-  onDeleteTab: (tab: Tab) => Promise<void>;
   onNewTab: () => void;
   budgets: Record<Provider, BudgetState> | null;
   resetDay: number;
@@ -27,6 +31,7 @@ interface Props {
 }
 
 export function Sidebar(p: Props) {
+  const [collapsed, setCollapsed] = useState<string[]>([]);
   const counts = laneCounts(p.tabs);
   const nothingSetUp = noneSetUp(p.available);
   return (
@@ -35,13 +40,14 @@ export function Sidebar(p: Props) {
         <h1>Council</h1>
         <span className={`conn${p.connected ? '' : ' off'}`} title={p.connected ? 'Connected to the local server' : 'Reconnecting…'} role="status" aria-label={p.connected ? 'connected' : 'reconnecting'} />
         <span className="spacer" />
+        <button className="iconbtn" onClick={p.onCollapse} aria-label="Collapse sidebar" title="Collapse sidebar">‹</button>
         <ThemeToggle />
         <button className={`iconbtn${p.view === 'settings' ? ' selected' : ''}`} onClick={() => p.onView(p.view === 'settings' ? 'tabs' : 'settings')} title="Settings (Alt+S)" aria-label="Settings" aria-pressed={p.view === 'settings'}>
           ⚙
         </button>
       </div>
 
-      <ProjectPicker projects={p.projects} project={p.project} onOpenProject={p.onOpenProject} />
+      <ProjectPicker project={p.project} onOpenProject={p.onOpenProject} />
 
       <div className="newtab">
         <button onClick={p.onNewTab} disabled={!p.project || nothingSetUp} title={nothingSetUp ? 'No coding CLI is set up yet' : p.project ? 'Create a tab and describe a task' : 'Open a project first'}>
@@ -50,7 +56,19 @@ export function Sidebar(p: Props) {
         </button>
       </div>
 
-      <TabList tabs={p.tabs} selectedId={p.selectedId} onSelect={p.onSelect} onCloseTab={p.onCloseTab} onDeleteTab={p.onDeleteTab} now={p.now} emptyText={p.project ? (nothingSetUp ? 'Set up a coding CLI to start.' : 'No tabs yet. Create one and describe a task.') : 'Open a project to start.'} />
+      <div className="workspace-list" aria-label="Open workspaces">
+        {p.openProjects.length === 0 && <div className="empty-note">Open a project to start.</div>}
+        {p.openProjects.map((workspace) => (
+          <section className="workspace-group" key={workspace.projectId}>
+            <div className={`workspace-heading${p.project?.projectId === workspace.projectId ? ' active' : ''}`}>
+              <button className="quiet workspace-toggle" type="button" onClick={() => setCollapsed((prev) => prev.includes(workspace.projectId) ? prev.filter((id) => id !== workspace.projectId) : [...prev, workspace.projectId])} aria-expanded={!collapsed.includes(workspace.projectId)} aria-label={`${collapsed.includes(workspace.projectId) ? 'Expand' : 'Collapse'} ${basename(workspace.root)}`}>{collapsed.includes(workspace.projectId) ? '▸' : '▾'}</button>
+              <button className="quiet workspace-name" type="button" onClick={() => p.onSelectProject(workspace)} aria-current={p.project?.projectId === workspace.projectId ? 'true' : undefined} title={workspace.root}>{basename(workspace.root)}</button>
+              <button className="quiet workspace-close" type="button" onClick={() => p.onCloseProject(workspace.projectId)} aria-label={`Close workspace ${basename(workspace.root)}`} title="Close workspace">×</button>
+            </div>
+            {!collapsed.includes(workspace.projectId) && <TabList tabs={p.tabs.filter((t) => t.projectId === workspace.projectId)} selectedId={p.selectedId} onSelect={p.onSelect} onCloseTab={p.onCloseTab} now={p.now} emptyText={nothingSetUp ? 'Set up a coding CLI to start.' : 'No sessions yet.'} />}
+          </section>
+        ))}
+      </div>
 
       <BudgetBars budgets={p.budgets} resetDay={p.resetDay} available={p.available} now={p.now} />
 

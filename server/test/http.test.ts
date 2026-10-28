@@ -324,8 +324,17 @@ test('POST /api/projects validates the path and registers it as recent', async (
   const missing = await api('POST', '/api/projects', { path: path.join(fixture.home, 'nope') });
   expect(missing.status).toBe(400);
   const notRepo = await api('POST', '/api/projects', { path: fixture.home });
-  expect(notRepo.status).toBe(400);
-  expect(String(notRepo.json.error)).toMatch(/git/i);
+  expect(notRepo.status).toBe(200);
+  expect(notRepo.json.root).toBe(path.resolve(fixture.home));
+  expect(notRepo.json.defaultBranch).toBeNull();
+  const restored = await api('GET', `/api/projects/${notRepo.json.projectId}`);
+  expect(restored.status).toBe(200);
+  expect(restored.json.root).toBe(notRepo.json.root);
+  const nested = path.join(fixture.home, 'nested-workspace');
+  fs.mkdirSync(nested, { recursive: true });
+  const selected = await api('POST', '/api/projects', { path: nested });
+  expect(selected.status).toBe(200);
+  expect(selected.json.root).toBe(path.resolve(nested));
 });
 
 test('GET /api/projects/discover and browse return directory metadata', async () => {

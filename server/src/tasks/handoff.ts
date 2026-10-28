@@ -70,7 +70,7 @@ export function buildHandoffPrompt(a: HandoffArgs): string {
       : `You are taking over a task from ${a.fromWorker}; the developer asked to continue with you.`;
   return [
     intro,
-    'Continue the work in the same project checkout. Do not start over and do not revert the previous changes unless they are wrong.',
+    'Continue the work in the same workspace. Do not start over and do not revert the previous changes unless they are wrong.',
     "Do not commit; leave the changes in the working copy for the developer to review. Follow the project's CLAUDE.md, AGENTS.md or GEMINI.md if present.",
     '',
     'Original task:',
@@ -82,7 +82,7 @@ export function buildHandoffPrompt(a: HandoffArgs): string {
     a.summary,
     '',
     'Uncommitted changes in the checkout (git diff --stat):',
-    a.diffStat.trim() === '' ? '(none)' : a.diffStat,
+    a.diffStat.trim() === '' ? '(none reported or Git information unavailable)' : a.diffStat,
     '',
     'Pick up from here. When you are done, say what you changed and what, if anything, is still open.',
   ].join('\n');

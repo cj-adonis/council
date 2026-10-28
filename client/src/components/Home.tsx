@@ -6,7 +6,6 @@ import { FolderBrowser } from './FolderBrowser';
 import { Health } from './Health';
 
 interface Props {
-  projects: ProjectInfo[];
   project: ProjectInfo | null;
   openTabs: number;
   available: Availability;
@@ -18,9 +17,10 @@ interface Props {
   onOpenProject: (path: string) => Promise<void>;
   onNewTab: () => void;
   onSettings: () => void;
+  confidenceThreshold?: number;
 }
 
-export function Steps() {
+export function Steps({ confidenceThreshold = 0.8 }: { confidenceThreshold?: number }) {
   return (
     <div className="steps" aria-label="How a tab works">
       <div className="step">
@@ -29,11 +29,11 @@ export function Steps() {
       </div>
       <div className="step">
         <b>2 · Route</b>
-        <span>The lowest-cost confident seat (≥80%) executes the task, with fallback to deep reasoning models.</span>
+        <span>The lowest-cost seat meeting the confidence threshold (≥{Math.round(confidenceThreshold * 100)}%) executes the task, with fallback to the strongest available seat.</span>
       </div>
       <div className="step">
         <b>3 · Review</b>
-        <span>The changes land in your checkout, uncommitted. Look them over in your editor or git.</span>
+        <span>Review the work and any changes in your workspace.</span>
       </div>
     </div>
   );
@@ -53,9 +53,9 @@ function Notes({ notes }: { notes: string[] }) {
 }
 
 /** What the main pane shows with no tab selected: set up a CLI, get started, or jump back in. */
-export function Home({ projects, project, openTabs, available, notes, health, checking, onRefresh, onOpenProject, onNewTab, onSettings }: Props) {
-  const { path, setPath, search, setSearch, opening, browsing, setBrowsing, currentCwd, open, recent, discovered } =
-    useProjectPicker({ projects, onOpenProject });
+export function Home({ project, openTabs, available, notes, health, checking, onRefresh, onOpenProject, onNewTab, onSettings, confidenceThreshold }: Props) {
+  const { opening, browsing, setBrowsing, browse, open } =
+    useProjectPicker({ onOpenProject });
 
   if (noneSetUp(available)) {
     return (
@@ -86,7 +86,7 @@ export function Home({ projects, project, openTabs, available, notes, health, ch
             <h2>{openTabs > 0 ? 'Pick a tab, or start another' : 'Start the first task'}</h2>
             <p className="lead">
               {openTabs > 0
-                ? `${basename(project.root)} has ${openTabs} open tab${openTabs === 1 ? '' : 's'} in the sidebar. Each one is a task with its own worker, editing this checkout in place.`
+                ? `${basename(project.root)} has ${openTabs} open tab${openTabs === 1 ? '' : 's'} in the sidebar. Each one is a task with its own worker in this workspace.`
                 : `Create a tab, describe the task, and the council routes it to the cheapest agent that can handle it. Workers follow the project's CLAUDE.md, AGENTS.md or GEMINI.md.`}
             </p>
             <div className="row">
@@ -97,115 +97,35 @@ export function Home({ projects, project, openTabs, available, notes, health, ch
                 or press <kbd>Alt</kbd> <kbd>N</kbd>
               </span>
             </div>
-            <Steps />
+            <Steps confidenceThreshold={confidenceThreshold} />
             <Notes notes={notes} />
           </>
         ) : (
           <>
             <h2>Your local AI workspace</h2>
             <p className="lead">
-              Open a git checkout. Each tab puts one agent to work in it, following the project's CLAUDE.md, AGENTS.md or GEMINI.md; nothing is committed, so you review the changes as you would your own.
+              Open a folder as a workspace. Each tab puts an agent to work in it, following any CLAUDE.md, AGENTS.md or GEMINI.md instructions it finds.
             </p>
 
             <Health health={health} checking={checking} onRefresh={onRefresh} />
 
             <div className="card">
               <h3>Open a project</h3>
-              {/* Current workspace 1-click button */}
-              {currentCwd && (
-                <div style={{ marginBottom: '12px' }}>
-                  <button
-                    type="button"
-                    className="primary"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
-                    onClick={() => void open(currentCwd)}
-                    disabled={opening}
-                  >
-                    <span>🚀</span>
-                    <span>Open Current Workspace: <strong>{basename(currentCwd)}</strong></span>
-                  </button>
-                  <span className="muted xs mono" style={{ display: 'block', marginTop: '4px' }}>
-                    {currentCwd}
-                  </span>
-                </div>
-              )}
-
-              <form
-                className="row"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void open(path);
-                }}
-              >
-                <input
-                  value={path}
-                  onChange={(e) => setPath(e.target.value)}
-                  placeholder="C:\path\to\checkout"
-                  aria-label="Project path"
-                  style={{ flex: 1 }}
-                />
-                <button type="submit" className="primary" disabled={opening || !path.trim()}>
-                  Open
-                </button>
+              <div className="row">
                 <button
                   type="button"
                   className="quiet"
-                  onClick={() => setBrowsing(true)}
+                  onClick={() => void browse()}
                   disabled={opening}
-                  title="Browse folders and Git repositories"
+                  title="Browse folders"
                 >
                   📁 Browse Folders
                 </button>
-              </form>
+              </div>
 
-              {(projects.length > 3 || discovered.length > 0 || search) && (
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search recent or discovered projects…"
-                  style={{ fontSize: 'var(--fs-xs)', marginTop: '8px' }}
-                />
-              )}
-
-              {recent.length > 0 && (
-                <div className="recent" aria-label="Recent projects">
-                  <span className="section-label">Recent Projects</span>
-                  {recent.map((pr) => (
-                    <button key={pr.projectId} onClick={() => void open(pr.root)} disabled={opening}>
-                      <span className="rrow">
-                        <span>{basename(pr.root)}</span>
-                        <span className="muted xs">{pr.defaultBranch ?? ''}</span>
-                      </span>
-                      <span className="path">{pr.root}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {discovered.length > 0 && (
-                <div className="recent" aria-label="Discovered projects" style={{ marginTop: '12px' }}>
-                  <span className="section-label">Discovered Repositories</span>
-                  {discovered.map((pr) => (
-                    <button key={pr.root} onClick={() => void open(pr.root)} disabled={opening}>
-                      <span className="rrow">
-                        <span>{pr.name}</span>
-                        {pr.defaultBranch && <span className="muted xs">{pr.defaultBranch}</span>}
-                      </span>
-                      <span className="path">{pr.root}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {search && recent.length === 0 && discovered.length === 0 && (
-                <div className="muted sm" style={{ padding: '16px 0', textAlign: 'center' }}>
-                  No matching repositories found.
-                </div>
-              )}
             </div>
 
-            <Steps />
+            <Steps confidenceThreshold={confidenceThreshold} />
             <Notes notes={notes} />
           </>
         )}
@@ -213,7 +133,7 @@ export function Home({ projects, project, openTabs, available, notes, health, ch
 
       {browsing && (
         <FolderBrowser
-          initialDir={currentCwd || project?.root}
+          initialDir={project?.root}
           onSelect={(selected) => void open(selected)}
           onClose={() => setBrowsing(false)}
         />

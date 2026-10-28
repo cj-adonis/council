@@ -26,16 +26,29 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function render(status: Tab['status'] = 'drafting') {
+async function render(status: Tab['status'] = 'drafting', transcript: Tab['transcript'] = []) {
   const submit = vi.fn(async () => {});
   const send = vi.fn(async () => {});
   await act(async () => root.render(createElement(Composer, {
-    tab: { status, projectId: 'project', fullAuto: false, transcript: [], worker: status === 'drafting' ? null : { provider: 'claude', model: null } } as unknown as Tab,
+    tab: { status, projectId: 'project', fullAuto: false, transcript, worker: status === 'drafting' ? null : { provider: 'claude', model: null } } as unknown as Tab,
     settings: { models: { claude: [], codex: [], gemini: [] }, allowedCommands: [] } as unknown as Settings,
     available: ['claude', 'codex', 'gemini'], onSubmit: submit, onSend: send, onSwitch: vi.fn(), onPermissionMode: vi.fn(),
   })));
   return { submit, send };
 }
+
+test('arrow keys browse this session’s submitted messages and restore the draft', async () => {
+  await render('idle', [{ kind: 'user', text: 'first' }, { kind: 'assistant', text: 'response' }, { kind: 'user', text: 'second' }] as Tab['transcript']);
+  const input = await type('draft');
+  await key(input, 'ArrowUp');
+  expect(input.value).toBe('second');
+  await key(input, 'ArrowUp');
+  expect(input.value).toBe('first');
+  await key(input, 'ArrowDown');
+  expect(input.value).toBe('second');
+  await key(input, 'ArrowDown');
+  expect(input.value).toBe('draft');
+});
 async function type(value: string, cursor = value.length) {
   const input = host.querySelector<HTMLTextAreaElement>('[aria-label="Message"]')!;
   await act(async () => {
