@@ -110,6 +110,7 @@ export interface CliHealth {
   authSource?: AuthSource;
   error?: string;
   models?: string[];
+  modelSource?: 'cache' | 'config' | 'defaults';
   modelLimits?: ModelLimit[];
   plan?: string;
   rateLimitTier?: string;

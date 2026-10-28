@@ -1286,6 +1286,7 @@ button.tab-row-action:focus-visible {
 
 /* Composer */
 .composer {
+  flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--surface);
   padding: 10px 18px 12px;
@@ -1373,6 +1374,42 @@ button.tab-row-action:focus-visible {
 .switch input:checked::after {
   left: 14px;
 }
+.composer-size-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.composer-resize {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 28px;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+.composer-resize:hover,
+.composer-resize:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.composer-resize:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.composer-resize-grip {
+  width: 28px;
+  height: 5px;
+  border-block: 1px solid currentColor;
+}
+@media (pointer: coarse) {
+  .composer-resize,
+  .composer-size-controls button { min-height: 44px; }
+}
 .composer-box {
   position: relative;
   display: flex;
@@ -1381,6 +1418,9 @@ button.tab-row-action:focus-visible {
 }
 .composer-box textarea {
   flex: 1;
+  min-height: 96px;
+  max-height: clamp(96px, 55dvh, 600px);
+  resize: none;
   border-radius: var(--r-md);
   padding: 8px 10px;
 }
@@ -1527,49 +1567,124 @@ button.tab-row-action:focus-visible {
 .settings .card > button.link {
   align-self: flex-start;
 }
-.health-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
+.provider-setup {
+  gap: 16px;
 }
-.hcard {
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  padding: 8px 10px;
+.provider-setup-header,
+.provider-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.provider-setup-header {
+  flex-wrap: wrap;
+}
+.provider-setup-header > div {
+  flex: 1;
+  min-width: min(100%, 240px);
+}
+.provider-setup-header h3 {
+  margin-bottom: 6px;
+}
+.connection-flow {
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 12px;
+  list-style: none;
+  padding: 12px;
+  margin: 0;
+  background: var(--accent-soft);
+  border-radius: var(--r-md);
   font-size: var(--fs-sm);
 }
-.hcard .who {
+.connection-flow li {
+  display: grid;
+  gap: 3px;
+}
+.connection-flow span {
+  color: var(--text-2);
+}
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 12px;
+}
+.provider-card {
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-top: 3px solid var(--provider-color);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.provider-name {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+.provider-checks {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+  font-size: var(--fs-sm);
+}
+.provider-checks > div {
   display: flex;
   gap: 6px;
-  align-items: center;
-  font-weight: 600;
-  color: var(--text);
+  justify-content: space-between;
 }
-.hcard .who .ver {
-  margin-left: auto;
-  font-weight: 400;
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+.provider-checks dt {
+  color: var(--text-2);
 }
-.hcard .hint {
+.provider-checks dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.provider-command,
+.provider-models {
+  display: grid;
+  gap: 6px;
+}
+.provider-command-row {
   display: flex;
   gap: 6px;
-  align-items: center;
+  align-items: flex-start;
   min-width: 0;
 }
-.hcard .hint code {
+.provider-command code {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  user-select: all;
   background: var(--surface);
-  padding: 2px 6px;
+  padding: 6px 8px;
   border-radius: var(--r-xs);
+  font-size: var(--fs-xs);
+}
+.provider-card .ladder-chip {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.provider-diagnostic {
+  margin-top: auto;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.provider-diagnostic summary {
+  color: var(--warn);
+  cursor: pointer;
+}
+.provider-diagnostic p {
+  margin-top: 6px;
+}
+.home-inner.home-setup {
+  max-width: 960px;
 }
 .seat-row {
   display: flex;

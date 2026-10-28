@@ -73,7 +73,7 @@ export const DEFAULT_KNOWN_MODELS: Record<Provider, string[]> = {
  * Detect available models for a provider by inspecting local CLI caches / settings
  * when available, falling back to known supported models.
  */
-export function detectModels(
+export function detectModelCatalog(
   provider: Provider,
   home: string = os.homedir(),
   readFile: (p: string) => string | null = (p) => {
@@ -83,7 +83,7 @@ export function detectModels(
       return null;
     }
   },
-): string[] {
+): { models: string[]; modelSource: NonNullable<CliHealth['modelSource']> } {
   const result: string[] = [];
 
   if (provider === 'codex') {
@@ -136,17 +136,22 @@ export function detectModels(
   }
 
   if (provider === 'codex') {
-    if (result.length > 0) return result;
-    return [...DEFAULT_KNOWN_MODELS.codex];
+    if (result.length > 0) return { models: result, modelSource: 'cache' };
+    return { models: [...DEFAULT_KNOWN_MODELS.codex], modelSource: 'defaults' };
   }
 
+  const modelSource = result.length > 0 ? 'config' : 'defaults';
   for (const m of DEFAULT_KNOWN_MODELS[provider]) {
     if (!result.includes(m)) {
       result.push(m);
     }
   }
 
-  return result;
+  return { models: result, modelSource };
+}
+
+export function detectModels(...args: Parameters<typeof detectModelCatalog>): string[] {
+  return detectModelCatalog(...args).models;
 }
 
 export interface PlanDetection {
@@ -253,7 +258,8 @@ export async function checkCli(provider: Provider, cmd: string = CLI_COMMANDS[pr
   const probe = await probeVersion(resolveCommand(cmd));
   const auth = detectAuth(provider);
   const authed = probe.installed && auth.authed;
-  const models = authed ? detectModels(provider) : undefined;
+  const catalog = authed ? detectModelCatalog(provider) : undefined;
+  const models = catalog?.models;
   const planInfo = authed ? detectPlan(provider) : {};
   const modelLimits = authed && models ? detectModelLimits(provider, models) : undefined;
   return {
@@ -263,6 +269,7 @@ export async function checkCli(provider: Provider, cmd: string = CLI_COMMANDS[pr
     authSource: auth.source,
     error: probe.error,
     models,
+    modelSource: catalog?.modelSource,
     modelLimits,
     plan: planInfo.plan,
     rateLimitTier: planInfo.rateLimitTier,

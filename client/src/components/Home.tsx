@@ -13,6 +13,8 @@ interface Props {
   /** Plain-language notes on the routing in force (which CLIs are set up, how tiers are filled). */
   notes: string[];
   health: Record<Provider, CliHealth> | null;
+  checking?: boolean;
+  onRefresh?: () => void;
   onOpenProject: (path: string) => Promise<void>;
   onNewTab: () => void;
   onSettings: () => void;
@@ -51,23 +53,23 @@ function Notes({ notes }: { notes: string[] }) {
 }
 
 /** What the main pane shows with no tab selected: set up a CLI, get started, or jump back in. */
-export function Home({ projects, project, openTabs, available, notes, health, onOpenProject, onNewTab, onSettings }: Props) {
+export function Home({ projects, project, openTabs, available, notes, health, checking, onRefresh, onOpenProject, onNewTab, onSettings }: Props) {
   const { path, setPath, search, setSearch, opening, browsing, setBrowsing, currentCwd, open, recent, discovered } =
     useProjectPicker({ projects, onOpenProject });
 
   if (noneSetUp(available)) {
     return (
       <main className="home">
-        <div className="home-inner">
-          <h2>Set up a coding CLI first</h2>
+        <div className="home-inner home-setup">
+          <h2>Connect your first AI provider</h2>
           <p className="lead">
-            Council drives Claude Code, Codex CLI and Gemini CLI, and none of them is installed and signed in on this machine yet, so there is nothing to route a task to. One is enough: with a single provider the council uses its cheapest model and the tiers climb that provider's own models.
+            Install a coding CLI and sign in through its terminal prompt. Council will use that CLI to evaluate tasks and run your chosen worker.
           </p>
-          <Health health={health} />
+          <Health health={health} checking={checking} onRefresh={onRefresh} />
           <p className="muted sm">
-            Install one, sign in, and Council notices within a minute. The same table lives under{' '}
+            You can manage providers anytime in{' '}
             <button className="link sm" onClick={onSettings}>
-              Settings › CLI health
+              Settings › AI Models &amp; Workers
             </button>
             .
           </p>
@@ -78,7 +80,7 @@ export function Home({ projects, project, openTabs, available, notes, health, on
 
   return (
     <main className="home">
-      <div className="home-inner">
+      <div className={project ? 'home-inner' : 'home-inner home-setup'}>
         {project ? (
           <>
             <h2>{openTabs > 0 ? 'Pick a tab, or start another' : 'Start the first task'}</h2>
@@ -100,12 +102,15 @@ export function Home({ projects, project, openTabs, available, notes, health, on
           </>
         ) : (
           <>
-            <h2>Get started</h2>
+            <h2>Your local AI workspace</h2>
             <p className="lead">
               Open a git checkout. Each tab puts one agent to work in it, following the project's CLAUDE.md, AGENTS.md or GEMINI.md; nothing is committed, so you review the changes as you would your own.
             </p>
 
+            <Health health={health} checking={checking} onRefresh={onRefresh} />
+
             <div className="card">
+              <h3>Open a project</h3>
               {/* Current workspace 1-click button */}
               {currentCwd && (
                 <div style={{ marginBottom: '12px' }}>
@@ -137,7 +142,6 @@ export function Home({ projects, project, openTabs, available, notes, health, on
                   onChange={(e) => setPath(e.target.value)}
                   placeholder="C:\path\to\checkout"
                   aria-label="Project path"
-                  autoFocus
                   style={{ flex: 1 }}
                 />
                 <button type="submit" className="primary" disabled={opening || !path.trim()}>

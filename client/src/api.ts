@@ -21,7 +21,7 @@ async function call<T>(method: string, route: string, body?: unknown): Promise<T
 }
 
 export const api = {
-  health: () => call<Record<Provider, CliHealth>>('GET', '/api/health'),
+  health: (fresh = false) => call<Record<Provider, CliHealth>>('GET', fresh ? '/api/health?refresh=1' : '/api/health'),
   settings: () => call<Settings>('GET', '/api/settings'),
   saveSettings: (partial: Partial<Settings>) => call<Settings>('PUT', '/api/settings', partial),
   detectModels: () => call<Settings>('POST', '/api/settings/detect-models'),

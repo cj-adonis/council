@@ -11,6 +11,7 @@ import { makeEngine, type EngineFixture } from './helpers/engineSetup.js';
 let fixture: EngineFixture;
 let server: CouncilServer;
 let base: string;
+const healthRequests: (boolean | undefined)[] = [];
 
 test('permission endpoint changes only the mode and rejects unsupported values', async () => {
   const tab = await fixture.engine.createTab('C:/proj', 'permission endpoint');
@@ -90,11 +91,14 @@ beforeAll(async () => {
     engine: fixture.engine,
     settings: new SettingsStore(path.join(fixture.home, 'settings.json'), fixture.settings),
     pricing: new PricingStore(path.join(fixture.home, 'pricing.json')),
-    health: async () => ({
+    health: async (fresh) => {
+      healthRequests.push(fresh);
+      return {
       claude: { installed: true, version: '2.1.302', authed: true },
       codex: { installed: false, authed: false, error: 'not found' },
       gemini: { installed: true, version: '0.15.3', authed: false },
-    }),
+      };
+    },
     clientDist,
   });
   const port = await server.listen(0, '127.0.0.1');
@@ -126,6 +130,15 @@ test('GET /api/health returns one entry per provider', async () => {
   expect(r.status).toBe(200);
   expect(Object.keys(r.json).sort()).toEqual(['claude', 'codex', 'gemini']);
   expect(r.json.codex).toMatchObject({ installed: false });
+});
+
+test('manual provider checks and model sync request fresh health', async () => {
+  expect((await api('GET', '/api/health?refresh=1')).status).toBe(200);
+  expect(healthRequests.at(-1)).toBe(true);
+  await api('GET', '/api/health');
+  expect(healthRequests.at(-1)).toBe(false);
+  expect((await api('POST', '/api/settings/detect-models')).status).toBe(200);
+  expect(healthRequests.at(-1)).toBe(true);
 });
 test('GET /api/settings returns the settings and PUT merges and persists a change', async () => {
   const before = await api('GET', '/api/settings');

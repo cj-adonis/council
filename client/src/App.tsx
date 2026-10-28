@@ -55,6 +55,7 @@ export function App() {
   const [budgets, setBudgets] = useState<Record<Provider, BudgetState> | null>(null);
   const [settings, setSettings] = useState<SettingsT | null>(null);
   const [health, setHealth] = useState<Record<Provider, CliHealth> | null>(null);
+  const [healthChecking, setHealthChecking] = useState(true);
   const [routing, setRouting] = useState<EffectiveRouting | null>(null);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [project, setProject] = useState<ProjectInfo | null>(null);
@@ -144,6 +145,18 @@ export function App() {
       .finally(() => setInitializing(false));
   }, [onError, openProject]);
 
+  const refreshHealth = useCallback(async (fresh = true) => {
+    setHealthChecking(true);
+    try {
+      setHealth(await api.health(fresh));
+      setRouting(await api.routing(project?.projectId));
+    } finally {
+      setHealthChecking(false);
+    }
+  }, [project?.projectId]);
+
+  const checkProviders = () => void refreshHealth().catch((err: Error) => onError(`Provider check failed: ${err.message}`));
+
   // Health and the routing in force (which CLIs are set up) for the open project; re-read now and then.
   useEffect(() => {
     let cancelled = false;
@@ -157,8 +170,9 @@ export function App() {
         .then((r) => {
           if (!cancelled) setRouting(r);
         })
-        .catch(() => {
-          if (!cancelled) setHealth(null);
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setHealthChecking(false);
         });
     };
     refresh();
@@ -374,7 +388,7 @@ export function App() {
             </div>
           </main>
         ) : view === 'settings' && settings ? (
-          <Settings settings={settings} onSaved={setSettings} health={health} onError={onError} />
+          <Settings settings={settings} onSaved={setSettings} health={health} checking={healthChecking} onRefresh={refreshHealth} onError={onError} />
         ) : selected && settings ? (
           <TabView
             key={selected.id}
@@ -389,7 +403,7 @@ export function App() {
             onTabUpdate={(updated) => setTabs((prev) => ({ ...prev, [updated.id]: updated }))}
           />
         ) : (
-          <Home projects={projects} project={project} openTabs={openTabs.length} available={available} notes={routing?.notes ?? []} health={health} onOpenProject={openFromUi} onNewTab={() => void newTab()} onSettings={() => setView('settings')} />
+          <Home projects={projects} project={project} openTabs={openTabs.length} available={available} notes={routing?.notes ?? []} health={health} checking={healthChecking} onRefresh={checkProviders} onOpenProject={openFromUi} onNewTab={() => void newTab()} onSettings={() => setView('settings')} />
         )}
       </div>
       {help && <ShortcutHelp onClose={() => setHelp(false)} />}

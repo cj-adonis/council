@@ -54,7 +54,9 @@ Type `/` at the start of a task or follow-up, or after a space or newline, to br
   - Codex CLI: `npm install -g @openai/codex`, then set `CODEX_API_KEY` (or `OPENAI_API_KEY`) or run `codex login`.
   - Gemini CLI: `npm install -g @google/gemini-cli`, then set `GEMINI_API_KEY` or run `gemini` once and sign in. Google Workspace accounts also need `GOOGLE_CLOUD_PROJECT`.
 
-The Settings page has a health panel that shows what Council can see of each CLI.
+On first launch, provider cards show installation, saved sign-in detection, and model choices for each CLI. Copy the install or sign-in command into your terminal, then choose **Check again** for a fresh check. One provider is enough to start. The same cards are available in **Settings → AI Models & Workers**.
+
+Council checks for local commands and saved logins or API keys; it does not sign you in itself. Model lists come from CLI caches, local settings, or built-in suggestions, and the cards identify that source. Suggestions do not confirm account access; the first task verifies that. **Sync model choices** in Settings refreshes these lists and saves them for the worker and council pickers.
 
 ## Install and run
 

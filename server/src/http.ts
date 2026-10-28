@@ -18,7 +18,7 @@ export interface ServerDeps {
   engine: TaskEngine;
   settings: SettingsStore;
   pricing: PricingStore;
-  health: () => Promise<Record<Provider, CliHealth>>;
+  health: (fresh?: boolean) => Promise<Record<Provider, CliHealth>>;
   /** Built client to serve at `/`; API only when omitted. */
   clientDist?: string;
 }
@@ -107,11 +107,12 @@ export function createServer(deps: ServerDeps): CouncilServer {
     const [, resource, id, action] = parts;
     const body = method === 'POST' || method === 'PUT' ? await readJson(req) : {};
 
-    if (resource === 'health' && method === 'GET') return { status: 200, body: await deps.health() };
+    if (resource === 'health' && method === 'GET') return { status: 200, body: await deps.health(url.searchParams.get('refresh') === '1') };
 
     if (resource === 'settings') {
       if (id === 'detect-models' && method === 'POST') {
-        const update = detectedModels(deps.settings.get(), await deps.health());
+        const health = await deps.health(true);
+        const update = detectedModels(deps.settings.get(), health);
         return { status: 200, body: await deps.settings.update(update) };
       }
       if (id === 'detect-budgets' && method === 'POST') {

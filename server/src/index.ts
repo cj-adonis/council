@@ -56,7 +56,7 @@ async function main(): Promise<void> {
 
   const here = path.dirname(fileURLToPath(import.meta.url));
   const clientDist = path.resolve(here, '..', '..', 'client', 'dist');
-  const server = createServer({ engine, settings, pricing, health: () => health.get(), clientDist });
+  const server = createServer({ engine, settings, pricing, health: (fresh) => health.get(fresh), clientDist });
   const port = Number(process.env.PORT ?? 4317);
   const host = process.env.HOST ?? '127.0.0.1';
   const bound = await server.listen(port, host);

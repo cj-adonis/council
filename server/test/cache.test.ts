@@ -8,6 +8,24 @@ const ready: Record<Provider, CliHealth> = {
   gemini: { installed: true, authed: true },
 };
 
+test('an explicit check waits for fresh health even inside the cache TTL and shares the probe', async () => {
+  let finish!: (value: typeof ready) => void;
+  const next = { ...ready, gemini: { installed: true, authed: false } };
+  const check = vi.fn().mockResolvedValueOnce(ready).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  const cache = createHealthCache(check);
+  await cache.get();
+  const first = cache.get(true);
+  const second = cache.get(true);
+  await Promise.resolve();
+  expect(check).toHaveBeenCalledTimes(2);
+  expect(cache.last()).toBe(ready);
+  expect(await cache.get()).toBe(ready);
+  finish(next);
+  expect(await first).toBe(next);
+  expect(await second).toBe(next);
+  expect(cache.last()).toBe(next);
+});
+
 test('concurrent initial requests share a single health probe', async () => {
   let finish!: (value: typeof ready) => void;
   const check = vi.fn(

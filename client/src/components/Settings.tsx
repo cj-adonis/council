@@ -3,12 +3,14 @@ import { api } from '../api';
 import { formatTokens, PROVIDER_NAMES } from '../lib/format';
 import { PROVIDERS, type CliHealth, type Provider, type Seat, type Settings as SettingsT } from '../types';
 import { Glyph } from './Glyph';
-import { Health } from './Health';
+import { Health, modelSourceLabel } from './Health';
 
 interface Props {
   settings: SettingsT;
   onSaved: (s: SettingsT) => void;
   health: Record<Provider, CliHealth> | null;
+  checking?: boolean;
+  onRefresh?: (fresh?: boolean) => Promise<void>;
   onError: (m: string) => void;
 }
 
@@ -41,7 +43,7 @@ function ModelPicker({
           const isDetected = detectedModels?.includes(m);
           return (
             <option key={m} value={m}>
-              {m} {isDetected ? '✓ auto-detected' : ''}
+              {m} {isDetected ? '· CLI choice' : ''}
             </option>
           );
         })}
@@ -92,7 +94,7 @@ function SeatRow({
   );
 }
 
-export function Settings({ settings, onSaved, health, onError }: Props) {
+export function Settings({ settings, onSaved, health, checking, onRefresh, onError }: Props) {
   const [s, setS] = useState<SettingsT>(settings);
   const [activeTab, setActiveTab] = useState<TabKey>('models');
   const [saving, setSaving] = useState(false);
@@ -136,7 +138,8 @@ export function Settings({ settings, onSaved, health, onError }: Props) {
       const updated = await api.detectModels();
       setS(updated);
       onSaved(updated);
-      setDetectMsg('AI models successfully auto-detected from logged-in CLIs!');
+      await onRefresh?.(false);
+      setDetectMsg('Model choices synced from local CLI data.');
       setTimeout(() => setDetectMsg(null), 4000);
     } catch (err) {
       onError(`Auto-detect failed: ${(err as Error).message}`);
@@ -191,23 +194,23 @@ export function Settings({ settings, onSaved, health, onError }: Props) {
 
       {activeTab === 'models' && (
         <>
-          <Health health={health} onDetectModels={() => void handleDetectModels()} detecting={detecting} />
+          <Health health={health} checking={checking || detecting} onRefresh={onRefresh ? () => void onRefresh().catch((err: Error) => onError(err.message)) : undefined} />
 
           <section className="card">
             <header className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Auto-Detected Model Ladders</span>
+              <span>Routing model choices</span>
               <button
                 type="button"
                 className="sm primary"
                 onClick={() => void handleDetectModels()}
-                disabled={detecting}
-                title="Re-query logged-in CLIs for latest available models"
+                disabled={detecting || checking}
+                title="Refresh local CLI data and save its model choices for routing"
               >
-                {detecting ? 'Detecting…' : '↻ Auto-Detect & Sync'}
+                {detecting ? 'Syncing…' : 'Sync model choices'}
               </button>
             </header>
             <p className="muted small">
-              Models are automatically discovered from local CLI configurations and active account logins. Zero manual entry needed.
+              These saved lists populate the worker and council seat pickers. Sync uses local CLI settings, model caches, and built-in suggestions; it does not query your account for model access.
             </p>
             <div className="grid3">
               {PROVIDERS.map((p) => {
@@ -220,7 +223,7 @@ export function Settings({ settings, onSaved, health, onError }: Props) {
                       <strong>{PROVIDER_NAMES[p]}</strong>
                       {isAuthed ? (
                         <span className="chip" style={{ marginLeft: 'auto', '--c': 'var(--ok)' } as React.CSSProperties}>
-                          {detected.length} auto-detected
+                          {detected.length} CLI choices
                         </span>
                       ) : (
                         <span className="chip" style={{ marginLeft: 'auto', '--c': 'var(--warn)' } as React.CSSProperties}>
@@ -230,20 +233,19 @@ export function Settings({ settings, onSaved, health, onError }: Props) {
                     </header>
                     <div className="ladder-chips" style={{ minHeight: '32px' }}>
                       {s.models[p].map((m) => {
-                        const isLive = detected.includes(m);
+                        const inCliChoices = detected.includes(m);
                         return (
                           <span
                             key={m}
                             className="ladder-chip"
-                            title={isLive ? 'Auto-detected from active login' : 'Cached model'}
+                            title={inCliChoices ? modelSourceLabel(health?.[p]?.modelSource) : 'Saved in Council settings'}
                           >
                             {m}
-                            {isLive && <span style={{ color: 'var(--ok)', fontSize: '10px' }}>✓</span>}
                           </span>
                         );
                       })}
                       {s.models[p].length === 0 && (
-                        <span className="muted xs">No models detected. Sign in to {PROVIDER_NAMES[p]} CLI.</span>
+                        <span className="muted xs">No model choices saved. Sign in to {PROVIDER_NAMES[p]} and sync.</span>
                       )}
                     </div>
                   </div>

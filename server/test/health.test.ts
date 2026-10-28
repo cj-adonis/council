@@ -1,7 +1,19 @@
 import { expect, test } from 'vitest';
-import { DEFAULT_KNOWN_MODELS, detectAuth, detectModelLimits, detectModels, detectPlan, probeVersion } from '../src/adapters/health.js';
+import { DEFAULT_KNOWN_MODELS, detectAuth, detectModelCatalog, detectModelLimits, detectModels, detectPlan, probeVersion } from '../src/adapters/health.js';
 import { checkAll } from '../src/adapters/index.js';
 import type { Adapter, CliHealth, Provider } from '../src/adapters/types.js';
+
+test('model catalogs distinguish cached inventory, local configuration and built-in suggestions', () => {
+  expect(detectModelCatalog('codex', '/fake', () => JSON.stringify({ models: [{ slug: 'account-model' }] })))
+    .toEqual({ models: ['account-model'], modelSource: 'cache' });
+  expect(detectModelCatalog('gemini', '/fake', () => JSON.stringify({ model: { name: 'custom-model' } })))
+    .toEqual({ models: ['custom-model', ...DEFAULT_KNOWN_MODELS.gemini], modelSource: 'config' });
+  expect(detectModelCatalog('claude', '/fake', () => JSON.stringify({ model: 'custom-claude' })))
+    .toEqual({ models: ['custom-claude', ...DEFAULT_KNOWN_MODELS.claude], modelSource: 'config' });
+  for (const provider of ['claude', 'codex', 'gemini'] as const) {
+    expect(detectModelCatalog(provider, '/fake', () => null)).toEqual({ models: DEFAULT_KNOWN_MODELS[provider], modelSource: 'defaults' });
+  }
+});
 
 test('checkAll returns one health entry per provider from the registry', async () => {
   const fake = (p: Provider, h: CliHealth): Adapter => ({

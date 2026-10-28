@@ -155,6 +155,7 @@ export interface CliHealth {
   authSource?: 'api-key' | 'login' | 'none' | 'unknown';
   error?: string;
   models?: string[];
+  modelSource?: 'cache' | 'config' | 'defaults';
   modelLimits?: ModelLimit[];
   plan?: string;
   rateLimitTier?: string;

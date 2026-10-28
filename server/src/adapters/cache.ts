@@ -22,8 +22,8 @@ export function createHealthCache(check: () => Promise<Health>, ttlMs = 60_000, 
   };
   return {
     last: () => last,
-    get(): Promise<Health> {
-      if (!last) return refresh();
+    get(fresh = false): Promise<Health> {
+      if (fresh || !last) return refresh();
       if (now() - fetchedAt >= ttlMs) void refresh().catch(() => {});
       return Promise.resolve(last);
     },

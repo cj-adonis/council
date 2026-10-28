@@ -49,7 +49,12 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch,
   const [skillsError, setSkillsError] = useState('');
   const [skillsRefresh, setSkillsRefresh] = useState(0);
   const messageInput = useRef<HTMLTextAreaElement>(null);
+  const [inputHeight, setInputHeight] = useState(96);
+  const resizeStart = useRef<{ y: number; height: number } | null>(null);
+  const maxInputHeight = Math.max(96, Math.min(600, Math.floor(window.innerHeight * 0.55)));
+  const resizeInput = (height: number) => setInputHeight(Math.round(Math.max(96, Math.min(maxInputHeight, height))));
   const skillMenuId = useId();
+  const messageInputId = `${skillMenuId}-message`;
   const [cursor, setCursor] = useState(0);
   const [skillIndex, setSkillIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -425,6 +430,37 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch,
         </div>
       )}
 
+      <div className="composer-size-controls">
+        <div className="composer-resize" role="separator" tabIndex={0}
+          aria-label="Resize message input" aria-orientation="horizontal" aria-controls={messageInputId}
+          aria-valuemin={96} aria-valuemax={maxInputHeight} aria-valuenow={Math.min(inputHeight, maxInputHeight)}
+          title="Drag up to enlarge or down to shrink. Use the arrow keys when focused."
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            resizeStart.current = { y: event.clientY, height: messageInput.current?.getBoundingClientRect().height ?? inputHeight };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            event.preventDefault();
+          }}
+          onPointerMove={(event) => {
+            const start = resizeStart.current;
+            if (start) resizeInput(start.height + start.y - event.clientY);
+          }}
+          onPointerUp={() => { resizeStart.current = null; }}
+          onPointerCancel={() => { resizeStart.current = null; }}
+          onLostPointerCapture={() => { resizeStart.current = null; }}
+          onKeyDown={(event) => {
+            const next = event.key === 'ArrowUp' ? inputHeight + 32 : event.key === 'ArrowDown' ? inputHeight - 32
+              : event.key === 'Home' ? 96 : event.key === 'End' ? maxInputHeight : null;
+            if (next !== null) { event.preventDefault(); resizeInput(next); }
+          }}>
+          <span className="composer-resize-grip" aria-hidden="true" />
+          <span>Drag to resize</span>
+        </div>
+        <button type="button" className="quiet sm" aria-expanded={inputHeight > 96} aria-controls={messageInputId}
+          onClick={() => resizeInput(inputHeight > 96 ? 96 : maxInputHeight)}>
+          {inputHeight > 96 ? 'Collapse input' : 'Expand input'}
+        </button>
+      </div>
       <div className="composer-box">
       {showSkillMenu && (
         <div id={skillMenuId} className="skill-commands" role="listbox" aria-label="Skill commands">
@@ -445,7 +481,9 @@ export function Composer({ tab, settings, available, onSubmit, onSend, onSwitch,
         </div>
       )}
         <textarea
+          id={messageInputId}
           ref={messageInput}
+          style={{ height: inputHeight }}
           value={text}
           onChange={(e) => { setText(e.target.value); setCursor(e.target.selectionStart); setSkillIndex(0); setSlashDismissed(false); }}
           onSelect={(e) => setCursor(e.currentTarget.selectionStart)}

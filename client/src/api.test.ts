@@ -34,6 +34,12 @@ describe('client api client', () => {
     });
   });
 
+  test('explicit provider checks request fresh health', async () => {
+    mockResponse({});
+    await api.health(true);
+    expect(mockFetch).toHaveBeenLastCalledWith('/api/health?refresh=1', expect.objectContaining({ method: 'GET' }));
+  });
+
   test('live input replies target one tab and request without changing permission settings', async () => {
     mockResponse({ id: 'tab-1' });
     await api.answerInput('tab-1', 'request-1', { decision: 'allow', optionId: 'once' });
