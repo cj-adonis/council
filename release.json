@@ -1,0 +1,6 @@
+{
+  "version": "0.2.0",
+  "url": "https://github.sec.samsung.net/cj-adonis/council/releases/tag/v0.2.0",
+  "notes": "## What's new in 0.2.0\n\n- **Update notices:** Council tells you when a new version is out (banner + Settings > About & updates). It never downloads or installs anything by itself.\n- **Experimental LiteLLM router (opt-in):** when turned on, LiteLLM's adaptive router chooses which of your signed-in CLI seats takes a task, learning from the work you accept or reject. Workers still run through your Claude, Codex and Gemini CLIs; no API keys are used. Off by default; needs Python with LiteLLM (see the README).\n\nTo update: download `CouncilSetup.exe` from this release, close Council, and run the installer. Your data in `~/.council` is kept.",
+  "publishedAt": "2026-11-05T00:00:00Z"
+}
